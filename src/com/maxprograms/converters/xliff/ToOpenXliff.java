@@ -317,6 +317,25 @@ public class ToOpenXliff {
         return result;
     }
 
+    private static List<Element> harvestContext(Element unit) {
+        List<Element> contextList = new ArrayList<>();
+        Element contextGroup = unit.getChild("context-group");
+        if (contextGroup != null) { 
+            List<Element> contextFound = contextGroup.getChildren("context");
+            Iterator<Element> it = contextFound.iterator();
+            while (it.hasNext()) {
+                Element context = it.next();
+                contextList.add(context);
+            }
+        }
+        return contextList;
+    }
+
+    private static Element harvestNote(Element unit) {
+        Element note = unit.getChild("note");
+        return note;
+    }
+
     private static void recurse1x(Element root, List<Element> units) {
         if ("xliff".equals(root.getName())) {
             List<Attribute> atts = root.getAttributes();
@@ -421,6 +440,22 @@ public class ToOpenXliff {
                     if (!altSource.getContent().isEmpty() && !altTarget.getContent().isEmpty()) {
                         unit.addContent(altTrans);
                     }
+                }
+                List<Element> contextList = harvestContext(root);
+                Element note = harvestNote(root);
+                // add context
+                if (!contextList.isEmpty()) {
+                    for (Element context : contextList) {
+                        Element noteElement = new Element("note");
+                        noteElement.addContent("Context: " + context.getText());
+                        unit.addContent(noteElement);
+                    }
+                }
+                // add note
+                if (note != null) {
+                    Element noteElement = new Element("note");
+                    noteElement.addContent("Note: " + note.getText());
+                    unit.addContent(noteElement);
                 }
                 units.add(unit);
                 root.addContent(new PI(Constants.TOOLID, unit.getAttributeValue("id")));
