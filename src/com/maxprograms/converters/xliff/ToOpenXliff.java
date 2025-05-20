@@ -443,18 +443,18 @@ public class ToOpenXliff {
                 }
                 List<Element> contextList = harvestContext(root);
                 Element note = harvestNote(root);
-                // add context
-                if (!contextList.isEmpty()) {
-                    for (Element context : contextList) {
-                        Element noteElement = new Element("note");
-                        noteElement.addContent("Context: " + context.getText());
-                        unit.addContent(noteElement);
-                    }
-                }
-                // add note
-                if (note != null) {
+                if (!contextList.isEmpty() || note != null) {
                     Element noteElement = new Element("note");
-                    noteElement.addContent("Note: " + note.getText());
+                    String noteText = "";
+                    if (!contextList.isEmpty()) {
+                        for (Element context : contextList) {
+                            noteText += "Context: " + context.getText() + "\n";
+                        }
+                    }
+                    if (note != null) {
+                        noteText += "Note: " + note.getText();
+                    }
+                    noteElement.addContent(noteText);
                     unit.addContent(noteElement);
                 }
                 units.add(unit);
