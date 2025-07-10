@@ -333,16 +333,23 @@ public class ToOpenXliff {
         }
         
         // Handle context and maxlen as direct attributes on trans-unit
-        if (unit.hasAttribute("context") || unit.hasAttribute("maxlen")) {
+        if (unit.hasAttribute("context") || unit.hasAttribute("maxlen") || unit.hasAttribute("id")) {
             Element contextGroup = new Element("context-group");
             contextGroup.setAttribute("name", "unit-context");
             contextGroup.setAttribute("purpose", "information");
+            
+            // Add ID as identifier context element
+            if (unit.hasAttribute("id")) {
+                Element idElement = new Element("context");
+                idElement.setAttribute("context-type", "x-identifier");
+                idElement.setText(unit.getAttributeValue("id"));
+                contextGroup.addContent(idElement);
+            }
             
             // Add context attribute as context element
             if (unit.hasAttribute("context")) {
                 Element contextElement = new Element("context");
                 contextElement.setAttribute("context-type", "x-context");
-                contextElement.setAttribute("context-id", unit.getAttributeValue("id", ""));
                 contextElement.setText(unit.getAttributeValue("context"));
                 contextGroup.addContent(contextElement);
             }
@@ -351,7 +358,6 @@ public class ToOpenXliff {
             if (unit.hasAttribute("maxlen")) {
                 Element maxlenElement = new Element("context");
                 maxlenElement.setAttribute("context-type", "x-charlimit");
-                maxlenElement.setAttribute("context-id", unit.getAttributeValue("id", ""));
                 maxlenElement.setText(unit.getAttributeValue("maxlen"));
                 contextGroup.addContent(maxlenElement);
             }
@@ -384,18 +390,16 @@ public class ToOpenXliff {
                     newContextGroup.setAttribute("crc", contextGroup.getAttributeValue("crc"));
                 }
                 
-                // Copy context elements with their context-id and other attributes
+                // Copy context elements without context-id attributes
                 List<Element> contexts = contextGroup.getChildren("context");
                 for (Element context : contexts) {
                     Element newContext = new Element("context");
                     
-                    // Copy all attributes including context-id
+                    // Copy attributes excluding context-id
                     if (context.hasAttribute("context-type")) {
                         newContext.setAttribute("context-type", context.getAttributeValue("context-type"));
                     }
-                    if (context.hasAttribute("context-id")) {
-                        newContext.setAttribute("context-id", context.getAttributeValue("context-id"));
-                    }
+                    // Note: context-id is omitted as requested
                     if (context.hasAttribute("match-mandatory")) {
                         newContext.setAttribute("match-mandatory", context.getAttributeValue("match-mandatory"));
                     }
