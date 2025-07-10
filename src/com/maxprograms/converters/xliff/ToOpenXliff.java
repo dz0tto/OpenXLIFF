@@ -325,10 +325,40 @@ public class ToOpenXliff {
 
     private static List<Element> harvestContext(Element unit) {
         List<Element> contextList = new ArrayList<>();
+        
+        // Handle traditional context-group elements
         List<Element> contextGroups = unit.getChildren("context-group");
         for (Element contextGroup : contextGroups) {
             contextList.add(contextGroup);
         }
+        
+        // Handle context and maxlen as direct attributes on trans-unit
+        if (unit.hasAttribute("context") || unit.hasAttribute("maxlen")) {
+            Element contextGroup = new Element("context-group");
+            contextGroup.setAttribute("name", "unit-context");
+            contextGroup.setAttribute("purpose", "information");
+            
+            // Add context attribute as context element
+            if (unit.hasAttribute("context")) {
+                Element contextElement = new Element("context");
+                contextElement.setAttribute("context-type", "x-context");
+                contextElement.setAttribute("context-id", unit.getAttributeValue("id", ""));
+                contextElement.setText(unit.getAttributeValue("context"));
+                contextGroup.addContent(contextElement);
+            }
+            
+            // Add maxlen attribute as context element for character limit
+            if (unit.hasAttribute("maxlen")) {
+                Element maxlenElement = new Element("context");
+                maxlenElement.setAttribute("context-type", "x-charlimit");
+                maxlenElement.setAttribute("context-id", unit.getAttributeValue("id", ""));
+                maxlenElement.setText(unit.getAttributeValue("maxlen"));
+                contextGroup.addContent(maxlenElement);
+            }
+            
+            contextList.add(contextGroup);
+        }
+        
         return contextList;
     }
 
