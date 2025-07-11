@@ -176,6 +176,12 @@ public class ToOpenXliff {
                 target.setContent(getContent2x(segment.getChild("target")));
                 unit.addContent(target);
                 if (segments.size() == 1) {
+                    // Handle context information from unit level
+                    List<Element> contextList = harvestContext(root);
+                    Element unitNote = harvestNote(root);
+                    addContextInformation(unit, contextList, unitNote);
+                    
+                    // Handle notes element
                     Element notes = root.getChild("notes");
                     if (notes != null) {
                         List<Element> noteList = notes.getChildren("note");
@@ -319,21 +325,118 @@ public class ToOpenXliff {
 
     private static List<Element> harvestContext(Element unit) {
         List<Element> contextList = new ArrayList<>();
-        Element contextGroup = unit.getChild("context-group");
-        if (contextGroup != null) { 
-            List<Element> contextFound = contextGroup.getChildren("context");
-            Iterator<Element> it = contextFound.iterator();
-            while (it.hasNext()) {
-                Element context = it.next();
-                contextList.add(context);
-            }
+        
+        // Handle traditional context-group elements
+        List<Element> contextGroups = unit.getChildren("context-group");
+        for (Element contextGroup : contextGroups) {
+            contextList.add(contextGroup);
         }
+        
+        // Handle context and maxlen as direct attributes on trans-unit
+        if (unit.hasAttribute("context") || unit.hasAttribute("maxlen") || unit.hasAttribute("id")) {
+            Element contextGroup = new Element("context-group");
+            contextGroup.setAttribute("name", "unit-context");
+            contextGroup.setAttribute("purpose", "information");
+            
+            // Add ID as identifier context element
+            if (unit.hasAttribute("id")) {
+                Element idElement = new Element("context");
+                idElement.setAttribute("context-type", "x-identifier");
+                idElement.setText(unit.getAttributeValue("id"));
+                contextGroup.addContent(idElement);
+            }
+            
+            // Add context attribute as context element
+            if (unit.hasAttribute("context")) {
+                Element contextElement = new Element("context");
+                contextElement.setAttribute("context-type", "x-context");
+                contextElement.setText(unit.getAttributeValue("context"));
+                contextGroup.addContent(contextElement);
+            }
+            
+            // Add maxlen attribute as context element for character limit
+            if (unit.hasAttribute("maxlen")) {
+                Element maxlenElement = new Element("context");
+                maxlenElement.setAttribute("context-type", "x-charlimit");
+                maxlenElement.setText(unit.getAttributeValue("maxlen"));
+                contextGroup.addContent(maxlenElement);
+            }
+            
+            contextList.add(contextGroup);
+        }
+        
         return contextList;
     }
 
     private static Element harvestNote(Element unit) {
         Element note = unit.getChild("note");
         return note;
+    }
+
+    private static void addContextInformation(Element targetUnit, List<Element> contextList, Element note) {
+        // Add context-group elements directly to preserve structure and context-id
+        if (!contextList.isEmpty()) {
+            for (Element contextGroup : contextList) {
+                Element newContextGroup = new Element("context-group");
+                
+                // Copy attributes from original context-group
+                if (contextGroup.hasAttribute("name")) {
+                    newContextGroup.setAttribute("name", contextGroup.getAttributeValue("name"));
+                }
+                if (contextGroup.hasAttribute("purpose")) {
+                    newContextGroup.setAttribute("purpose", contextGroup.getAttributeValue("purpose"));
+                }
+                if (contextGroup.hasAttribute("crc")) {
+                    newContextGroup.setAttribute("crc", contextGroup.getAttributeValue("crc"));
+                }
+                
+                // Copy context elements without context-id attributes
+                List<Element> contexts = contextGroup.getChildren("context");
+                for (Element context : contexts) {
+                    Element newContext = new Element("context");
+                    
+                    // Copy attributes excluding context-id
+                    if (context.hasAttribute("context-type")) {
+                        newContext.setAttribute("context-type", context.getAttributeValue("context-type"));
+                    }
+                    // Note: context-id is omitted as requested
+                    if (context.hasAttribute("match-mandatory")) {
+                        newContext.setAttribute("match-mandatory", context.getAttributeValue("match-mandatory"));
+                    }
+                    if (context.hasAttribute("crc")) {
+                        newContext.setAttribute("crc", context.getAttributeValue("crc"));
+                    }
+                    
+                    // Copy the text content
+                    newContext.setText(context.getText());
+                    newContextGroup.addContent(newContext);
+                }
+                
+                targetUnit.addContent(newContextGroup);
+            }
+        }
+        
+        // Add note separately if it exists
+        if (note != null) {
+            Element noteElement = new Element("note");
+            noteElement.setText(note.getText());
+            
+            // Copy note attributes
+            if (note.hasAttribute("priority")) {
+                noteElement.setAttribute("priority", note.getAttributeValue("priority"));
+            }
+            if (note.hasAttribute("from")) {
+                noteElement.setAttribute("from", note.getAttributeValue("from"));
+            }
+            if (note.hasAttribute("annotates")) {
+                String value = note.getAttributeValue("annotates");
+                if ("source".equals(value) || "target".equals(value)) {
+                    noteElement.setAttribute("appliesTo", value);
+                }
+            }
+            
+            targetUnit.addContent(noteElement);
+        }
     }
 
     private static void recurse1x(Element root, List<Element> units) {
@@ -443,20 +546,7 @@ public class ToOpenXliff {
                 }
                 List<Element> contextList = harvestContext(root);
                 Element note = harvestNote(root);
-                if (!contextList.isEmpty() || note != null) {
-                    Element noteElement = new Element("note");
-                    String noteText = "";
-                    if (!contextList.isEmpty()) {
-                        for (Element context : contextList) {
-                            noteText += "Context: " + context.getText() + "\n";
-                        }
-                    }
-                    if (note != null) {
-                        noteText += "Note: " + note.getText();
-                    }
-                    noteElement.addContent(noteText);
-                    unit.addContent(noteElement);
-                }
+                addContextInformation(unit, contextList, note);
                 units.add(unit);
                 root.addContent(new PI(Constants.TOOLID, unit.getAttributeValue("id")));
             }
