@@ -400,20 +400,20 @@ public class ToOpenXliff {
 
     private static List<Element> harvestContext(Element unit, String idAttribute, String charlimAttribute, String contextAttribute) {
         List<Element> contextList = new ArrayList<>();
+
+        boolean hasId = idAttribute != null && !idAttribute.isEmpty();
+        boolean hasContext = contextAttribute != null && !contextAttribute.isEmpty();
+        boolean hasCharlim = charlimAttribute != null && !charlimAttribute.isEmpty();
         
-        // Handle traditional context-group elements
-        List<Element> contextGroups = unit.getChildren("context-group");
-        for (Element contextGroup : contextGroups) {
-            contextList.add(contextGroup);
-        }
+        Element contextGroup = new Element("context-group");
+        contextGroup.setAttribute("name", "unit-context");
+
         // Handle context and maxlen as direct attributes on trans-unit
-        if (unit.hasAttribute("context") || unit.hasAttribute("maxlen") || unit.hasAttribute("id")) {
-            Element contextGroup = new Element("context-group");
-            contextGroup.setAttribute("name", "unit-context");
-            contextGroup.setAttribute("purpose", "information");
+        if (hasContext || hasCharlim || hasId) {
+
             
             // Add ID as identifier context element
-            if (idAttribute != null && !idAttribute.isEmpty() && unit.hasAttribute(idAttribute)) {
+            if (hasId && unit.hasAttribute(idAttribute)) {
                 Element idElement = new Element("context");
                 idElement.setAttribute("context-type", "x-identifier");
                 idElement.setText(unit.getAttributeValue(idAttribute));
@@ -421,7 +421,7 @@ public class ToOpenXliff {
             }
             
             // Add context attribute as context element
-            if (contextAttribute != null && !contextAttribute.isEmpty() && unit.hasAttribute(contextAttribute)) {
+            if (hasContext && unit.hasAttribute(contextAttribute)) {
                 Element contextElement = new Element("context");
                 contextElement.setAttribute("context-type", "x-context");
                 contextElement.setText(unit.getAttributeValue(contextAttribute));
@@ -429,16 +429,33 @@ public class ToOpenXliff {
             }
             
             // Add maxlen attribute as context element for character limit
-            if (charlimAttribute != null && !charlimAttribute.isEmpty() && unit.hasAttribute(charlimAttribute)) {
+            String charlimValue = null;
+            for (Attribute a : unit.getAttributes()) {
+                if (a.getName().equals(charlimAttribute) || a.getName().endsWith(":" + charlimAttribute) || a.getName().endsWith(charlimAttribute)) {
+                    charlimValue = a.getValue();
+                    break;
+                }
+            }
+            if (charlimValue != null) {
                 Element maxlenElement = new Element("context");
                 maxlenElement.setAttribute("context-type", "x-charlimit");
-                maxlenElement.setText(unit.getAttributeValue(charlimAttribute));
+                maxlenElement.setText(charlimValue);
                 contextGroup.addContent(maxlenElement);
             }
-            
+        }
+
+        // Handle traditional context-group elements, add to  the same contextGroup if it exists
+        List<Element> contextGroups = unit.getChildren("context-group");
+        for (Element cg : contextGroups) {
+            for (Element context : cg.getChildren("context")) {
+                contextGroup.addContent(context);
+            }
+        }
+        //check if contextGroup is empty
+        if (!contextGroup.getChildren().isEmpty()) {
             contextList.add(contextGroup);
         }
-        
+
         return contextList;
     }
 
@@ -473,7 +490,6 @@ public class ToOpenXliff {
                     if (context.hasAttribute("context-type")) {
                         newContext.setAttribute("context-type", context.getAttributeValue("context-type"));
                     }
-                    // Note: context-id is omitted as requested
                     if (context.hasAttribute("match-mandatory")) {
                         newContext.setAttribute("match-mandatory", context.getAttributeValue("match-mandatory"));
                     }
