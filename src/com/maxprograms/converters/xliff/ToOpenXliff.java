@@ -57,6 +57,10 @@ public class ToOpenXliff {
         String sourceLanguage = params.get("srcLang");
         String targetLanguage = params.get("tgtLang");
         String catalog = params.get("catalog");
+        // optional parameters
+        String idAttribute = params.get("idAttribute");
+        String charlimAttribute = params.get("charlimAttribute");
+        String contextAttribute = params.get("contextAttribute");
         try {
             SAXBuilder builder = new SAXBuilder();
             builder.setEntityResolver(CatalogBuilder.getCatalog(catalog));
@@ -98,10 +102,10 @@ public class ToOpenXliff {
 
             if (root.getAttributeValue("version").startsWith("1")) {
                 namespaces = new ArrayList<>();
-                recurse1x(root, units);
+                recurse1x(root, units, idAttribute, charlimAttribute, contextAttribute);
             }
             if (root.getAttributeValue("version").startsWith("2")) {
-                recurse2x(root, units);
+                recurse2x(root, units, idAttribute, charlimAttribute, contextAttribute);
                 if (!file.hasAttribute("target-language") && hasTarget(units)) {
                     throw new IOException(Messages.getString("ToOpenXliff.3"));
                 }
@@ -148,7 +152,7 @@ public class ToOpenXliff {
         return false;
     }
 
-    private static void recurse2x(Element root, List<Element> units) {
+    private static void recurse2x(Element root, List<Element> units, String idAttribute, String charlimAttribute, String contextAttribute) {
         if ("unit".equals(root.getName()) && !root.getAttributeValue("translate").equals("no")) {
             boolean preserve = root.getAttributeValue("xml:space").equals("preserve");
             List<Element> segments = root.getChildren("segment");
@@ -176,13 +180,12 @@ public class ToOpenXliff {
                 Element target = new Element("target");
                 target.setContent(getContent2x(segment.getChild("target"), false));
                 unit.addContent(target);
+                // Always add context/note for every trans-unit
+                List<Element> contextList = harvestContext(root, idAttribute, charlimAttribute, contextAttribute);
+                Element unitNote = harvestNote(root);
+                addContextInformation(unit, contextList, unitNote);
                 if (segments.size() == 1) {
-                    // Handle context information from unit level
-                    List<Element> contextList = harvestContext(root);
-                    Element unitNote = harvestNote(root);
-                    addContextInformation(unit, contextList, unitNote);
-                    
-                    // Handle notes element
+                    // Handle notes element (multiple notes)
                     Element notes = root.getChild("notes");
                     if (notes != null) {
                         List<Element> noteList = notes.getChildren("note");
@@ -243,7 +246,7 @@ public class ToOpenXliff {
         List<Element> children = root.getChildren();
         Iterator<Element> it = children.iterator();
         while (it.hasNext()) {
-            recurse2x(it.next(), units);
+            recurse2x(it.next(), units, idAttribute, charlimAttribute, contextAttribute);
         }
     }
 
@@ -395,7 +398,7 @@ public class ToOpenXliff {
         return result;
     }
 
-    private static List<Element> harvestContext(Element unit) {
+    private static List<Element> harvestContext(Element unit, String idAttribute, String charlimAttribute, String contextAttribute) {
         List<Element> contextList = new ArrayList<>();
         
         // Handle traditional context-group elements
@@ -403,7 +406,6 @@ public class ToOpenXliff {
         for (Element contextGroup : contextGroups) {
             contextList.add(contextGroup);
         }
-        
         // Handle context and maxlen as direct attributes on trans-unit
         if (unit.hasAttribute("context") || unit.hasAttribute("maxlen") || unit.hasAttribute("id")) {
             Element contextGroup = new Element("context-group");
@@ -411,26 +413,26 @@ public class ToOpenXliff {
             contextGroup.setAttribute("purpose", "information");
             
             // Add ID as identifier context element
-            if (unit.hasAttribute("id")) {
+            if (idAttribute != null && !idAttribute.isEmpty() && unit.hasAttribute(idAttribute)) {
                 Element idElement = new Element("context");
                 idElement.setAttribute("context-type", "x-identifier");
-                idElement.setText(unit.getAttributeValue("id"));
+                idElement.setText(unit.getAttributeValue(idAttribute));
                 contextGroup.addContent(idElement);
             }
             
             // Add context attribute as context element
-            if (unit.hasAttribute("context")) {
+            if (contextAttribute != null && !contextAttribute.isEmpty() && unit.hasAttribute(contextAttribute)) {
                 Element contextElement = new Element("context");
                 contextElement.setAttribute("context-type", "x-context");
-                contextElement.setText(unit.getAttributeValue("context"));
+                contextElement.setText(unit.getAttributeValue(contextAttribute));
                 contextGroup.addContent(contextElement);
             }
             
             // Add maxlen attribute as context element for character limit
-            if (unit.hasAttribute("maxlen")) {
+            if (charlimAttribute != null && !charlimAttribute.isEmpty() && unit.hasAttribute(charlimAttribute)) {
                 Element maxlenElement = new Element("context");
                 maxlenElement.setAttribute("context-type", "x-charlimit");
-                maxlenElement.setText(unit.getAttributeValue("maxlen"));
+                maxlenElement.setText(unit.getAttributeValue(charlimAttribute));
                 contextGroup.addContent(maxlenElement);
             }
             
@@ -520,7 +522,7 @@ public class ToOpenXliff {
         return -1;
     }
 
-    private static void recurse1x(Element root, List<Element> units) {
+    private static void recurse1x(Element root, List<Element> units, String idAttribute, String charlimAttribute, String contextAttribute) {
         if ("xliff".equals(root.getName())) {
             List<Attribute> atts = root.getAttributes();
             Iterator<Attribute> it = atts.iterator();
@@ -574,6 +576,11 @@ public class ToOpenXliff {
                                 }
                             }
                             unit.addContent(target);
+                            // --- Add context and note for 1.x ---
+                            List<Element> contextList = harvestContext(root, idAttribute, charlimAttribute, contextAttribute);
+                            Element note = harvestNote(root);
+                            addContextInformation(unit, contextList, note);
+                            // ---
                             units.add(unit);
                             e.addContent(new PI(Constants.TOOLID, unit.getAttributeValue("id")));
                         }
@@ -625,9 +632,11 @@ public class ToOpenXliff {
                         unit.addContent(altTrans);
                     }
                 }
-                List<Element> contextList = harvestContext(root);
+                // --- Add context and note for 1.x ---
+                List<Element> contextList = harvestContext(root, idAttribute, charlimAttribute, contextAttribute);
                 Element note = harvestNote(root);
                 addContextInformation(unit, contextList, note);
+                // ---
                 units.add(unit);
                 root.addContent(new PI(Constants.TOOLID, unit.getAttributeValue("id")));
             }
@@ -636,7 +645,7 @@ public class ToOpenXliff {
         List<Element> children = root.getChildren();
         Iterator<Element> it = children.iterator();
         while (it.hasNext()) {
-            recurse1x(it.next(), units);
+            recurse1x(it.next(), units, idAttribute, charlimAttribute, contextAttribute);
         }
     }
 

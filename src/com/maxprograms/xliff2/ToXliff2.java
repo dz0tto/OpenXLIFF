@@ -339,6 +339,11 @@ public class ToXliff2 {
 			}
 			target.addContent(unit);
 
+			List<Element> contextGroups = source.getChildren("context-group");
+			for (Element contextGroup : contextGroups) {
+				unit.addContent(deepCopyElement(contextGroup));
+			}
+
 			List<Element> sourceNotes = new ArrayList<>();
 			List<Element> targetNotes = new ArrayList<>();
 			List<Element> notesList = source.getChildren("note");
@@ -704,5 +709,24 @@ public class ToXliff2 {
 			}
 		}
 		return result;
+	}
+
+	private static Element deepCopyElement(Element original) {
+		Element copy = new Element(original.getName());
+		// Copy attributes
+		List<Attribute> atts = original.getAttributes();
+		for (Attribute a : atts) {
+			copy.setAttribute(a.getName(), a.getValue());
+		}
+		// Copy children
+		List<Element> children = original.getChildren();
+		for (Element child : children) {
+			copy.addContent(deepCopyElement(child));
+		}
+		// Only set text if there are no child elements
+		if (children.isEmpty() && original.getText() != null && !original.getText().isEmpty()) {
+			copy.setText(original.getText());
+		}
+		return copy;
 	}
 }
