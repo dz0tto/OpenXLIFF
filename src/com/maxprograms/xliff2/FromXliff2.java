@@ -437,7 +437,7 @@ public class FromXliff2 {
 						}
 						if (n.getNodeType() == XMLNode.ELEMENT_NODE) {
 							Element clean = removeComments((Element) n);
-							newContent.addAll(clean.getContent());
+							newContent.add(clean);
 						}
 					}
 				} else {
