@@ -413,19 +413,8 @@ public class ToXliff2 {
 			}
 			mrkCount = 1;
 			tgt2.setContent(harvestContent(tgt, tagAttributes));
-			if (!targetNotes.isEmpty()) {
-				for (int i = 0; i < targetNotes.size(); i++) {
-					Element note = targetNotes.get(i);
-					Element mrk = new Element("mrk");
-					mrk.setAttribute("id", "tn" + i);
-					mrk.setAttribute("type", "comment");
-					mrk.setAttribute("ref", "#n=" + note.getAttributeValue("id"));
-					mrk.setContent(tgt2.getContent());
-					List<XMLNode> content = new ArrayList<>();
-					content.add(mrk);
-					tgt2.setContent(content);
-				}
-			}
+			// Do not wrap target content in <mrk> for context/notes.
+			// Notes are already represented in the <notes> container at unit level.
 			if (!tgt2.getContent().isEmpty()) {
 				if (!"final".equals(segment.getAttributeValue("state", "initial"))) {
 					segment.setAttribute("state", "translated");
