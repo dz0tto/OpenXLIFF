@@ -46,6 +46,43 @@ public class ToXliff2 {
 	private static int fileId;
 	private static int mrkCount;
 
+	private static String normalizeInlineId(String rawId) {
+		if (rawId == null || rawId.isBlank()) {
+			return null;
+		}
+		String t = rawId.trim();
+		if (t.length() > 1 && (t.charAt(0) == 'x' || t.charAt(0) == 'p')
+				&& Character.isDigit(t.charAt(1))) {
+			return t.substring(1);
+		}
+		return t;
+	}
+
+	private static boolean isLevshaStylePh(Element ph) {
+		String text = ph.getText();
+		if (text == null) {
+			return false;
+		}
+		String trimmed = text.trim();
+		return trimmed.startsWith("<x") && (trimmed.contains("equiv-text") || trimmed.contains("ctype"));
+	}
+
+	private static String extractEquivText(String markup) {
+		if (markup == null) {
+			return null;
+		}
+		int start = markup.indexOf("equiv-text=\"");
+		if (start == -1) {
+			return null;
+		}
+		start += "equiv-text=\"".length();
+		int end = markup.indexOf('"', start);
+		if (end == -1) {
+			return null;
+		}
+		return markup.substring(start, end);
+	}
+
 	private static List<String> preserveAttributes = Arrays.asList("reformat", "datatype", "ts", "phase-name",
 			"restype", "resname", "extradata", "help-id", "menu", "menu-option", "menu-name", "coord", "font",
 			"css-style", "style", "exstyle", "extype", "maxbytes", "minbytes", "size-unit", "maxheight", "minheight",
@@ -478,13 +515,18 @@ public class ToXliff2 {
 
 	private static void harvestInline(Element originalData, Element tagAttributes, Element tag) {
 		if ("ph".equals(tag.getName())) {
-			String id = "ph" + tag.getAttributeValue("id");
-			if (!containsTag(originalData, id)) {
+			boolean levshaStyle = isLevshaStylePh(tag);
+			String dataId = levshaStyle ? tag.getAttributeValue("id") : "ph" + tag.getAttributeValue("id");
+			if (!containsTag(originalData, dataId)) {
 				Element data = new Element("data");
-				data.setAttribute("id", id);
-				data.setContent(tag.getContent());
+				data.setAttribute("id", dataId);
+				if (levshaStyle) {
+					data.setText(tag.getText());
+				} else {
+					data.setContent(tag.getContent());
+				}
 				originalData.addContent(data);
-				storeAttributes(tagAttributes, tag, id);
+				storeAttributes(tagAttributes, tag, dataId);
 			}
 			return;
 		}
@@ -522,8 +564,15 @@ public class ToXliff2 {
 			return;
 		}
 		if ("x".equals(tag.getName())) {
-			String id = "x" + tag.getAttributeValue("id");
-			storeAttributes(tagAttributes, tag, id);
+			String numericId = normalizeInlineId(tag.getAttributeValue("id"));
+			String dataId = numericId != null ? numericId : tag.getAttributeValue("id");
+			if (!containsTag(originalData, dataId)) {
+				Element data = new Element("data");
+				data.setAttribute("id", dataId);
+				data.setText(tag.toString());
+				originalData.addContent(data);
+			}
+			storeAttributes(tagAttributes, tag, "x" + tag.getAttributeValue("id"));
 			return;
 		}
 		List<Element> children = tag.getChildren();
@@ -575,8 +624,17 @@ public class ToXliff2 {
 		List<XMLNode> result = new ArrayList<>();
 		if ("ph".equals(e.getName())) {
 			Element ph = new Element("ph");
-			String id = "ph" + e.getAttributeValue("id");
-			ph.setAttribute("id", id);
+			String rawId = e.getAttributeValue("id");
+			if (isLevshaStylePh(e)) {
+				ph.setAttribute("id", rawId);
+				ph.setAttribute("dataRef", rawId);
+				String equiv = extractEquivText(e.getText());
+				if (equiv != null && !equiv.isEmpty()) {
+					ph.setAttribute("equiv", equiv);
+				}
+			} else {
+				ph.setAttribute("id", "ph" + rawId);
+			}
 			result.add(ph);
 			return result;
 		}
@@ -679,9 +737,15 @@ public class ToXliff2 {
 			return result;
 		}
 		if ("x".equals(e.getName())) {
+			String numericId = normalizeInlineId(e.getAttributeValue("id"));
+			String id = numericId != null ? numericId : e.getAttributeValue("id");
 			Element ph = new Element("ph");
-			String id = "x" + e.getAttributeValue("id");
 			ph.setAttribute("id", id);
+			ph.setAttribute("dataRef", id);
+			String equiv = e.getAttributeValue("equiv-text");
+			if (equiv != null && !equiv.isEmpty()) {
+				ph.setAttribute("equiv", equiv);
+			}
 			result.add(ph);
 			return result;
 		}
