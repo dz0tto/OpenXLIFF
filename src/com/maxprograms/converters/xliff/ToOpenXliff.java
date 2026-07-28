@@ -44,6 +44,32 @@ public class ToOpenXliff {
     private static boolean preserveSpaces = false;
     private static List<String[]> sourcetags;
 
+    private static String normalizeInlineId(String rawId) {
+        if (rawId == null || rawId.isBlank()) {
+            return null;
+        }
+        String t = rawId.trim();
+        if (t.length() > 1 && (t.charAt(0) == 'x' || t.charAt(0) == 'p')
+                && Character.isDigit(t.charAt(1))) {
+            return t.substring(1);
+        }
+        return t;
+    }
+
+    private static boolean isLevshaStyleInline(Element e) {
+        return e.hasAttribute("equiv-text") || e.hasAttribute("ctype");
+    }
+
+    private static String inlinePhId(Element e) {
+        if (isLevshaStyleInline(e)) {
+            String preserved = normalizeInlineId(e.getAttributeValue("id"));
+            if (preserved != null && !preserved.isEmpty()) {
+                return preserved;
+            }
+        }
+        return String.valueOf(tag++);
+    }
+
     private ToOpenXliff() {
         // do not instantiate this class
         // use run method instead
@@ -726,7 +752,7 @@ public class ToOpenXliff {
                     if ("x".equals(name) || "bx".equals(name) || "ex".equals(name) || "ph".equals(name)
                             || "bpt".equals(name) || "ept".equals(name) || "it".equals(name)) {
                         Element ph = new Element("ph");
-                        ph.setAttribute("id", "" + tag++);
+                        ph.setAttribute("id", inlinePhId(e));
                         ph.setText(e.toString());
                         result.add(ph);
                     }
