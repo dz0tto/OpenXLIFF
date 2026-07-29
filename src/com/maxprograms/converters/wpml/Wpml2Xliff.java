@@ -270,6 +270,10 @@ public class Wpml2Xliff {
                     return true;
                 }
             }
+            // Keep tag-only sources (inline markup with no plain text).
+            if (n.getNodeType() == XMLNode.ELEMENT_NODE) {
+                return true;
+            }
         }
         return false;
     }

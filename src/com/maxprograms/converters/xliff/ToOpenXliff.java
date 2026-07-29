@@ -692,9 +692,12 @@ public class ToOpenXliff {
     }
 
     private static boolean hasTranslatableText(Element e) {
-        if (("source".equals(e.getName()) || "target".equals(e.getName()) || "mrk".equals(e.getName())
-                || "pc".equals(e.getName()) || "sub".equals(e.getName())) && XliffUtils.hasText(e)) {
-            return true;
+        if ("source".equals(e.getName()) || "target".equals(e.getName()) || "mrk".equals(e.getName())
+                || "pc".equals(e.getName()) || "sub".equals(e.getName())) {
+            // Keep units whose source is only inline tags (no plain text).
+            if (XliffUtils.hasText(e) || !e.getChildren().isEmpty()) {
+                return true;
+            }
         }
         List<Element> children = e.getChildren();
         Iterator<Element> it = children.iterator();

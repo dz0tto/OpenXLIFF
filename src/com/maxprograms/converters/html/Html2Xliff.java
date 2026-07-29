@@ -248,7 +248,8 @@ public class Html2Xliff {
 
 		writeSkeleton(initial);
 		String tagged = addTags(translatable);
-		if (containsText(tagged)) {
+		// Keep tag-only chunks as segments (not skeleton-only) so editors can see them.
+		if (containsText(tagged) || containsInlineTags(tagged)) {
 			translatable = tagged;
 			if (segByElement) {
 				String[] frags = translatable.split("\u2029");
@@ -272,13 +273,25 @@ public class Html2Xliff {
 
 	private static void writeSegment(String segment) throws IOException, SAXException, ParserConfigurationException {
 		segment = segment.replace("\u2029", "");
-		String pure = removePH(segment);
-		if (pure.trim().isEmpty()) {
-			writeSkeleton(phContent(segment));
-			return;
-		}
 		if (segment.trim().isEmpty()) {
 			writeSkeleton(segment);
+			return;
+		}
+		String pure = removePH(segment);
+		if (pure.trim().isEmpty()) {
+			// Tag-only source: emit a trans-unit; do not strip tags into the skeleton.
+			first = "";
+			last = "";
+			tagId = 0;
+			writeString("   <trans-unit id=\"" + segId + "\" xml:space=\"preserve\" approved=\"no\">\n"
+					+ "      <source>");
+			if (keepFormat) {
+				writeString(segment);
+			} else {
+				writeString(normalize(segment));
+			}
+			writeString("</source>\n   </trans-unit>\n");
+			writeSkeleton("%%%" + segId++ + "%%%\n");
 			return;
 		}
 
@@ -1107,7 +1120,7 @@ public class Html2Xliff {
 
 		for (int i = 0; i < length; i++) {
 			char c = string.charAt(i);
-			if (string.startsWith("<ph", 1)) {
+			if (string.startsWith("<ph", i)) {
 				inTag = true;
 			}
 			if (string.startsWith("</ph>", i)) {
@@ -1120,6 +1133,10 @@ public class Html2Xliff {
 			}
 		}
 		return !buffer.toString().trim().isEmpty();
+	}
+
+	private static boolean containsInlineTags(String string) {
+		return string != null && string.contains("<ph");
 	}
 
 }
