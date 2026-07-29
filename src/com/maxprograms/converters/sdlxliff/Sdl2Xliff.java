@@ -301,10 +301,16 @@ public class Sdl2Xliff {
 			}
 			if (n.getNodeType() == XMLNode.ELEMENT_NODE) {
 				Element e = (Element) n;
-				if (e.getName().equals("mrk") && containsText(e)) {
+				String name = e.getName();
+				if (name.equals("mrk") && containsText(e)) {
 					return true;
 				}
-				if (e.getName().equals("g") && containsText(e)) {
+				if (name.equals("g") && containsText(e)) {
+					return true;
+				}
+				// Keep tag-only segments (standalone placeholders / paired tags).
+				if (name.equals("x") || name.equals("bx") || name.equals("ex") || name.equals("ph")
+						|| name.equals("bpt") || name.equals("ept") || name.equals("it")) {
 					return true;
 				}
 			}

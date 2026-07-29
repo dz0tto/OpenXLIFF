@@ -561,7 +561,7 @@ public class Xml2Xliff {
 
 	private static void writeSegment(String tagged) throws IOException, SAXException, ParserConfigurationException {
 		String restype = "";
-		if (!containsText(tagged)) {
+		if (!containsText(tagged) && !containsInlineTags(tagged)) {
 			String untagged = removeTags(tagged);
 			writeSkeleton(untagged);
 			return;
@@ -871,6 +871,33 @@ public class Xml2Xliff {
 				}
 			}
 			if (node.getNodeType() == XMLNode.ELEMENT_NODE && containsText((Element) node)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean containsInlineTags(String string)
+			throws IOException, ParserConfigurationException, SAXException {
+		if (string == null || string.strip().isEmpty()) {
+			return false;
+		}
+		String source = "<holder>" + string.strip() + "</holder>";
+		SAXBuilder b = new SAXBuilder();
+		Document d = b.build(new ByteArrayInputStream(source.getBytes(StandardCharsets.UTF_8)));
+		return containsInlineTags(d.getRootElement());
+	}
+
+	private static boolean containsInlineTags(Element e) {
+		String name = e.getName();
+		if ("ph".equals(name) || "bpt".equals(name) || "ept".equals(name) || "it".equals(name) || "x".equals(name)
+				|| "g".equals(name) || "bx".equals(name) || "ex".equals(name)) {
+			return true;
+		}
+		List<Element> children = e.getChildren();
+		Iterator<Element> it = children.iterator();
+		while (it.hasNext()) {
+			if (containsInlineTags(it.next())) {
 				return true;
 			}
 		}

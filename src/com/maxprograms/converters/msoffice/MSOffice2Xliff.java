@@ -174,8 +174,10 @@ public class MSOffice2Xliff {
 		}
 
 		writeSkel(replaceText(start, "\uE0FF", "&quot;"));
-		if (containsText(source)) {
-			List<Element> phs = source.getChildren("ph");
+		List<Element> remainingPhs = source.getChildren("ph");
+		// Keep tag-only cells/runs as segments so they appear in editors.
+		if (containsText(source) || !remainingPhs.isEmpty()) {
+			List<Element> phs = remainingPhs;
 			for (int i = 0; i < phs.size(); i++) {
 				phs.get(i).setAttribute("id", "" + (i + 1));
 			}
