@@ -164,7 +164,19 @@ public class FromOpenXliff {
                             addtarget(root);
                             target = root.getChild("target");
                         }
+                        String space = target.getAttributeValue("xml:space", "");
+                        if (space.isEmpty()) {
+                            Element source = root.getChild("source");
+                            if (source != null) {
+                                space = source.getAttributeValue("xml:space", "");
+                            }
+                        }
                         target.clone(segment.getChild("target"));
+                        if (!space.isEmpty()) {
+                            // keep the original space handling so Indenter does not inject
+                            // whitespace into tag-only targets (e.g. MemoQ bilingual files)
+                            target.setAttribute("xml:space", space);
+                        }
                         if (!target.getContent().isEmpty() && ("new".equals(target.getAttributeValue("state"))
                                 || "needs-translation".equals(target.getAttributeValue("state")))) {
                             target.setAttribute("state", "translated");
@@ -190,7 +202,22 @@ public class FromOpenXliff {
     private static void replaceTags(Element target, int version)
             throws SAXException, IOException, ParserConfigurationException {
         StringBuilder sb = new StringBuilder();
-        sb.append("<target>");
+        sb.append("<target");
+        // declare the namespaces available in the skeleton so restored inline markup
+        // with prefixed names (e.g. MemoQ <mq:ch/>) can be parsed back into the target
+        List<Attribute> rootAtts = skeleton.getRootElement().getAttributes();
+        Iterator<Attribute> ra = rootAtts.iterator();
+        while (ra.hasNext()) {
+            Attribute a = ra.next();
+            if (a.getName().startsWith("xmlns:")) {
+                sb.append(' ');
+                sb.append(a.getName());
+                sb.append("=\"");
+                sb.append(XMLUtils.cleanText(a.getValue()).replace("\"", "&quot;"));
+                sb.append("\"");
+            }
+        }
+        sb.append('>');
         List<XMLNode> content = target.getContent();
         auto = 1;
         Iterator<XMLNode> it = content.iterator();

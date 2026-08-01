@@ -763,6 +763,16 @@ public class ToOpenXliff {
                         // add <mrk> as is
                         result.add(e);
                     }
+                    if (!"g".equals(name) && !"x".equals(name) && !"bx".equals(name) && !"ex".equals(name)
+                            && !"ph".equals(name) && !"bpt".equals(name) && !"ept".equals(name)
+                            && !"it".equals(name) && !"mrk".equals(name)) {
+                        // Tool-specific inline codes (e.g. MemoQ <mq:ch/>) must not be dropped;
+                        // keep the original markup as a placeholder so it survives the round trip.
+                        Element ph = new Element("ph");
+                        ph.setAttribute("id", inlinePhId(e));
+                        ph.setText(e.toString());
+                        result.add(ph);
+                    }
                 }
             }
         }
