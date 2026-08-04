@@ -42,6 +42,7 @@ public class ToOpenXliff {
     private static List<String> namespaces;
     private static int tag;
     private static boolean preserveSpaces = false;
+    private static boolean includeNonTranslatable = false;
     private static List<String[]> sourcetags;
 
     private static String normalizeInlineId(String rawId) {
@@ -60,8 +61,60 @@ public class ToOpenXliff {
         return e.hasAttribute("equiv-text") || e.hasAttribute("ctype");
     }
 
+    /** Native MemoQ {@code <ph>&lt;mq:rxt…/&gt;</ph>} (or decoded child text). */
+    private static boolean isMemoQPayloadInline(Element e) {
+        if (e == null) {
+            return false;
+        }
+        String text = e.getText();
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String t = text.trim();
+        return t.startsWith("<mq:rxt") || t.startsWith("<mq:rxt-req") || t.startsWith("&lt;mq:rxt")
+                || t.startsWith("&lt;mq:rxt-req");
+    }
+
+    private static boolean isPreservedInline(Element e) {
+        return isLevshaStyleInline(e) || isMemoQPayloadInline(e);
+    }
+
+    /** Short display hint from MemoQ {@code displaytext}/{@code val} without re-serializing attrs. */
+    private static String extractPayloadHint(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return "";
+        }
+        String hint = extractXmlAttr(payload, "displaytext");
+        if (hint == null || hint.isBlank()) {
+            hint = extractXmlAttr(payload, "val");
+        }
+        return hint != null ? hint : "";
+    }
+
+    private static String extractXmlAttr(String xml, String attrName) {
+        if (xml == null || attrName == null) {
+            return null;
+        }
+        String needle = attrName + "=\"";
+        int start = xml.indexOf(needle);
+        if (start < 0) {
+            needle = attrName + "='";
+            start = xml.indexOf(needle);
+            if (start < 0) {
+                return null;
+            }
+        }
+        start += needle.length();
+        char quote = xml.charAt(start - 1);
+        int end = xml.indexOf(quote, start);
+        if (end < 0) {
+            return null;
+        }
+        return xml.substring(start, end);
+    }
+
     private static String inlinePhId(Element e) {
-        if (isLevshaStyleInline(e)) {
+        if (isPreservedInline(e)) {
             String preserved = normalizeInlineId(e.getAttributeValue("id"));
             if (preserved != null && !preserved.isEmpty()) {
                 return preserved;
@@ -87,6 +140,10 @@ public class ToOpenXliff {
         String idAttribute = params.get("idAttribute");
         String charlimAttribute = params.get("charlimAttribute");
         String contextAttribute = params.get("contextAttribute");
+        includeNonTranslatable = "yes".equalsIgnoreCase(params.get("includeNonTranslatable"));
+        // idAttribute stays opt-in: callers that need the original TU id as x-identifier
+        // context (e.g. Swordfish rematch) pass "idAttribute=id" explicitly. Defaulting it
+        // here would silently add context-groups to every generic XLIFF conversion.
         try {
             SAXBuilder builder = new SAXBuilder();
             builder.setEntityResolver(CatalogBuilder.getCatalog(catalog));
@@ -179,7 +236,8 @@ public class ToOpenXliff {
     }
 
     private static void recurse2x(Element root, List<Element> units, String idAttribute, String charlimAttribute, String contextAttribute) {
-        if ("unit".equals(root.getName()) && !root.getAttributeValue("translate").equals("no")) {
+        if ("unit".equals(root.getName())
+                && (includeNonTranslatable || !root.getAttributeValue("translate").equals("no"))) {
             boolean preserve = root.getAttributeValue("xml:space").equals("preserve");
             List<Element> segments = root.getChildren("segment");
             Iterator<Element> st = segments.iterator();
@@ -190,6 +248,9 @@ public class ToOpenXliff {
                 unit.setAttribute("id", "" + units.size());
                 if (isFinal) {
                     unit.setAttribute("approved", "yes");
+                }
+                if ("no".equals(root.getAttributeValue("translate"))) {
+                    unit.setAttribute("translate", "no");
                 }
                 Element src = segment.getChild("source");
                 if (preserve || src.getAttributeValue("xml:space").equals("preserve")) {
@@ -456,10 +517,13 @@ public class ToOpenXliff {
             
             // Add maxlen attribute as context element for character limit
             String charlimValue = null;
-            for (Attribute a : unit.getAttributes()) {
-                if (a.getName().equals(charlimAttribute) || a.getName().endsWith(":" + charlimAttribute) || a.getName().endsWith(charlimAttribute)) {
-                    charlimValue = a.getValue();
-                    break;
+            if (hasCharlim) {
+                for (Attribute a : unit.getAttributes()) {
+                    if (a.getName().equals(charlimAttribute) || a.getName().endsWith(":" + charlimAttribute)
+                            || a.getName().endsWith(charlimAttribute)) {
+                        charlimValue = a.getValue();
+                        break;
+                    }
                 }
             }
             if (charlimValue != null) {
@@ -584,7 +648,8 @@ public class ToOpenXliff {
                 renameAttributes(root);
             }
         }
-        if ("trans-unit".equals(root.getName()) && !root.getAttributeValue("translate").equals("no")) {
+        if ("trans-unit".equals(root.getName())
+                && (includeNonTranslatable || !root.getAttributeValue("translate").equals("no"))) {
             Element segSource = root.getChild("seg-source");
             if (segSource != null) {
                 List<XMLNode> content = segSource.getContent();
@@ -597,6 +662,7 @@ public class ToOpenXliff {
                             Element unit = new Element("trans-unit");
                             unit.setAttribute("id", "" + units.size());
                             unit.setAttribute("approved", root.getAttributeValue("approved", "no"));
+                            copyLockSignals(root, unit);
                             boolean space = root.getAttributeValue("xml:space").equals("preserve");
                             if (space) {
                                 unit.setAttribute("xml:space", "preserve");
@@ -632,6 +698,7 @@ public class ToOpenXliff {
                 Element unit = new Element("trans-unit");
                 unit.setAttribute("id", "" + units.size());
                 unit.setAttribute("approved", root.getAttributeValue("approved", "no"));
+                copyLockSignals(root, unit);
                 boolean space = root.getAttributeValue("xml:space").equals("preserve");
                 if (space || preserveSpaces) {
                     unit.setAttribute("xml:space", "preserve");
@@ -756,18 +823,22 @@ public class ToOpenXliff {
                             || "bpt".equals(name) || "ept".equals(name) || "it".equals(name)) {
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
-                        // Levsha/MemoQ placeholders: keep opaque child text (mq:rxt payload).
-                        // Element.toString() re-serializes and collapses nested entities (&amp;lt;→&lt;).
-                        if (isLevshaStyleInline(e)) {
+                        // Levsha <x equiv-text> and native MemoQ <ph>mq:rxt</ph>: keep opaque child
+                        // text + display hint. Never Element.toString() for payloads — it collapses
+                        // nested entities (&amp;lt;→&lt;) and forces Swordfish rewrite workarounds.
+                        if (isPreservedInline(e)) {
                             String payload = e.getText();
+                            String equiv = e.getAttributeValue("equiv-text", "");
+                            if (equiv.isEmpty()) {
+                                equiv = e.getAttributeValue("equiv", "");
+                            }
+                            if (equiv.isEmpty()) {
+                                equiv = extractPayloadHint(payload);
+                            }
                             if (payload != null && !payload.isEmpty()) {
                                 ph.setText(payload);
                             } else {
                                 ph.setText(e.toString());
-                            }
-                            String equiv = e.getAttributeValue("equiv-text", "");
-                            if (equiv.isEmpty()) {
-                                equiv = e.getAttributeValue("equiv", "");
                             }
                             if (!equiv.isEmpty()) {
                                 ph.setAttribute("equiv-text", equiv);
@@ -795,6 +866,20 @@ public class ToOpenXliff {
             }
         }
         return result;
+    }
+
+    /** Copy translate=no / ts=locked so ToXliff2 can emit editor lock state. */
+    private static void copyLockSignals(Element from, Element to) {
+        if ("no".equals(from.getAttributeValue("translate"))) {
+            to.setAttribute("translate", "no");
+            // ToXliff2 maps ts=locked → subState; treat non-translatable as locked for the editor.
+            if (!"locked".equals(to.getAttributeValue("ts"))) {
+                to.setAttribute("ts", "locked");
+            }
+        }
+        if ("locked".equals(from.getAttributeValue("ts"))) {
+            to.setAttribute("ts", "locked");
+        }
     }
 
     private static void renameAttributes(Element e) {

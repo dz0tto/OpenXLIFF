@@ -199,12 +199,15 @@ public class FromOpenXliff {
         }
     }
 
+    private static final String MQ_NS = "MQXliff";
+
     private static void replaceTags(Element target, int version)
             throws SAXException, IOException, ParserConfigurationException {
         StringBuilder sb = new StringBuilder();
         sb.append("<target");
         // declare the namespaces available in the skeleton so restored inline markup
         // with prefixed names (e.g. MemoQ <mq:ch/>) can be parsed back into the target
+        boolean hasMqNs = false;
         List<Attribute> rootAtts = skeleton.getRootElement().getAttributes();
         Iterator<Attribute> ra = rootAtts.iterator();
         while (ra.hasNext()) {
@@ -215,7 +218,15 @@ public class FromOpenXliff {
                 sb.append("=\"");
                 sb.append(XMLUtils.cleanText(a.getValue()).replace("\"", "&quot;"));
                 sb.append("\"");
+                if ("xmlns:mq".equals(a.getName())) {
+                    hasMqNs = true;
+                }
             }
+        }
+        if (!hasMqNs) {
+            sb.append(" xmlns:mq=\"");
+            sb.append(MQ_NS);
+            sb.append('"');
         }
         sb.append('>');
         List<XMLNode> content = target.getContent();
@@ -237,7 +248,7 @@ public class FromOpenXliff {
                         sb.append(mrk.toString());
                     }
                 } else {
-                    sb.append(e.getText());
+                    appendRestoredInline(sb, e);
                 }
             }
         }
@@ -246,6 +257,34 @@ public class FromOpenXliff {
         String string = sb.toString();
         Document d = builder.build(new ByteArrayInputStream(string.getBytes(StandardCharsets.UTF_8)));
         target.setContent(d.getRootElement().getContent());
+    }
+
+    /**
+     * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:rxt} payloads stay inside
+     * {@code <ph>} (escaped text) — expanding them as real {@code <mq:rxt>} elements breaks
+     * LevshaXLIFF merge and requires Swordfish post-processing.
+     */
+    private static void appendRestoredInline(StringBuilder sb, Element e) {
+        String text = e.getText();
+        if (text == null) {
+            text = "";
+        }
+        String trimmed = text.trim();
+        boolean mqPayload = trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req");
+        if (mqPayload) {
+            sb.append("<ph");
+            String id = e.getAttributeValue("id", "");
+            if (!id.isEmpty()) {
+                sb.append(" id=\"");
+                sb.append(XMLUtils.cleanText(id).replace("\"", "&quot;"));
+                sb.append('"');
+            }
+            sb.append('>');
+            sb.append(XMLUtils.cleanText(text));
+            sb.append("</ph>");
+            return;
+        }
+        sb.append(text);
     }
 
     private static Element processMrk(Element e) {
