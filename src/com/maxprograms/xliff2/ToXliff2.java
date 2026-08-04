@@ -59,7 +59,7 @@ public class ToXliff2 {
 	}
 
 	private static boolean isLevshaStylePh(Element ph) {
-		// Prefer attribute marker from ToOpenXliff (opaque mq:rxt payload is no longer wrapped in <x>).
+		// Levsha <x equiv-text> / ToOpenXliff markers, or native MemoQ mq:rxt ph text.
 		if (ph.hasAttribute("equiv-text") || ph.hasAttribute("equiv") || ph.hasAttribute("ctype")) {
 			return true;
 		}
@@ -68,6 +68,10 @@ public class ToXliff2 {
 			return false;
 		}
 		String trimmed = text.trim();
+		if (trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req") || trimmed.startsWith("&lt;mq:rxt")
+				|| trimmed.startsWith("&lt;mq:rxt-req")) {
+			return true;
+		}
 		return trimmed.startsWith("<x") && (trimmed.contains("equiv-text") || trimmed.contains("ctype"));
 	}
 
@@ -474,7 +478,8 @@ public class ToXliff2 {
 				if (!"final".equals(segment.getAttributeValue("state", "initial"))) {
 					segment.setAttribute("state", "translated");
 				}
-			} else {
+			} else if (!"final".equals(segment.getAttributeValue("state", "initial"))) {
+				// Empty/tag-only targets used to wipe approved→final down to initial.
 				segment.setAttribute("state", "initial");
 			}
 			if (hasTarget) {
