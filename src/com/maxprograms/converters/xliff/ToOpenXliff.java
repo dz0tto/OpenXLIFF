@@ -756,7 +756,25 @@ public class ToOpenXliff {
                             || "bpt".equals(name) || "ept".equals(name) || "it".equals(name)) {
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
-                        ph.setText(e.toString());
+                        // Levsha/MemoQ placeholders: keep opaque child text (mq:rxt payload).
+                        // Element.toString() re-serializes and collapses nested entities (&amp;lt;→&lt;).
+                        if (isLevshaStyleInline(e)) {
+                            String payload = e.getText();
+                            if (payload != null && !payload.isEmpty()) {
+                                ph.setText(payload);
+                            } else {
+                                ph.setText(e.toString());
+                            }
+                            String equiv = e.getAttributeValue("equiv-text", "");
+                            if (equiv.isEmpty()) {
+                                equiv = e.getAttributeValue("equiv", "");
+                            }
+                            if (!equiv.isEmpty()) {
+                                ph.setAttribute("equiv-text", equiv);
+                            }
+                        } else {
+                            ph.setText(e.toString());
+                        }
                         result.add(ph);
                     }
                     if ("mrk".equals(name)) {

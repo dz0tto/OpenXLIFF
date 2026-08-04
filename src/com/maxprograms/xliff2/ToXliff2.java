@@ -59,6 +59,10 @@ public class ToXliff2 {
 	}
 
 	private static boolean isLevshaStylePh(Element ph) {
+		// Prefer attribute marker from ToOpenXliff (opaque mq:rxt payload is no longer wrapped in <x>).
+		if (ph.hasAttribute("equiv-text") || ph.hasAttribute("equiv") || ph.hasAttribute("ctype")) {
+			return true;
+		}
 		String text = ph.getText();
 		if (text == null) {
 			return false;
@@ -67,7 +71,21 @@ public class ToXliff2 {
 		return trimmed.startsWith("<x") && (trimmed.contains("equiv-text") || trimmed.contains("ctype"));
 	}
 
-	private static String extractEquivText(String markup) {
+	private static String extractEquivText(Element ph) {
+		if (ph == null) {
+			return null;
+		}
+		String fromAttr = ph.getAttributeValue("equiv-text", "");
+		if (fromAttr.isEmpty()) {
+			fromAttr = ph.getAttributeValue("equiv", "");
+		}
+		if (!fromAttr.isEmpty()) {
+			return fromAttr;
+		}
+		return extractEquivTextFromMarkup(ph.getText());
+	}
+
+	private static String extractEquivTextFromMarkup(String markup) {
 		if (markup == null) {
 			return null;
 		}
@@ -628,7 +646,7 @@ public class ToXliff2 {
 			if (isLevshaStylePh(e)) {
 				ph.setAttribute("id", rawId);
 				ph.setAttribute("dataRef", rawId);
-				String equiv = extractEquivText(e.getText());
+				String equiv = extractEquivText(e);
 				if (equiv != null && !equiv.isEmpty()) {
 					ph.setAttribute("equiv", equiv);
 				}
