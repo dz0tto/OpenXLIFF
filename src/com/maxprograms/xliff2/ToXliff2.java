@@ -59,7 +59,7 @@ public class ToXliff2 {
 	}
 
 	private static boolean isLevshaStylePh(Element ph) {
-		// Prefer attribute marker from ToOpenXliff (opaque mq:rxt payload is no longer wrapped in <x>).
+		// Attribute marker from ToOpenXliff, or historic wrapped <x equiv-text> ph text.
 		if (ph.hasAttribute("equiv-text") || ph.hasAttribute("equiv") || ph.hasAttribute("ctype")) {
 			return true;
 		}

@@ -199,12 +199,15 @@ public class FromOpenXliff {
         }
     }
 
+    private static final String MQ_NS = "MQXliff";
+
     private static void replaceTags(Element target, int version)
             throws SAXException, IOException, ParserConfigurationException {
         StringBuilder sb = new StringBuilder();
         sb.append("<target");
         // declare the namespaces available in the skeleton so restored inline markup
         // with prefixed names (e.g. MemoQ <mq:ch/>) can be parsed back into the target
+        boolean hasMqNs = false;
         List<Attribute> rootAtts = skeleton.getRootElement().getAttributes();
         Iterator<Attribute> ra = rootAtts.iterator();
         while (ra.hasNext()) {
@@ -215,7 +218,17 @@ public class FromOpenXliff {
                 sb.append("=\"");
                 sb.append(XMLUtils.cleanText(a.getValue()).replace("\"", "&quot;"));
                 sb.append("\"");
+                if ("xmlns:mq".equals(a.getName())) {
+                    hasMqNs = true;
+                }
             }
+        }
+        // Levsha/MQXLIFF create can leave skeleton without xmlns:mq while originalData still
+        // holds bare <mq:rxt> payloads — bind the prefix so replaceTags can parse them.
+        if (!hasMqNs) {
+            sb.append(" xmlns:mq=\"");
+            sb.append(MQ_NS);
+            sb.append('"');
         }
         sb.append('>');
         List<XMLNode> content = target.getContent();
@@ -237,7 +250,7 @@ public class FromOpenXliff {
                         sb.append(mrk.toString());
                     }
                 } else {
-                    sb.append(e.getText());
+                    appendInlineMarkup(sb, e.getText());
                 }
             }
         }
@@ -246,6 +259,26 @@ public class FromOpenXliff {
         String string = sb.toString();
         Document d = builder.build(new ByteArrayInputStream(string.getBytes(StandardCharsets.UTF_8)));
         target.setContent(d.getRootElement().getContent());
+    }
+
+    /**
+     * Inline ph text is usually already a parseable fragment ({@code <x>…</x>} or
+     * {@code <mq:ch/>}). Bare MemoQ payloads ({@code <mq:rxt…>}) must be wrapped so
+     * {@code restoreMemoQPhInExportedXliff} can turn them back into {@code <ph>} and so
+     * nested entity encoding in attribute values is not re-parsed as element markup.
+     */
+    private static void appendInlineMarkup(StringBuilder sb, String markup) {
+        if (markup == null || markup.isEmpty()) {
+            return;
+        }
+        String trimmed = markup.trim();
+        if (trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req")) {
+            sb.append("<x>");
+            sb.append(XMLUtils.cleanText(markup));
+            sb.append("</x>");
+            return;
+        }
+        sb.append(markup);
     }
 
     private static Element processMrk(Element e) {

@@ -36,6 +36,7 @@ import com.maxprograms.xml.SAXBuilder;
 import com.maxprograms.xml.TextNode;
 import com.maxprograms.xml.XMLNode;
 import com.maxprograms.xml.XMLOutputter;
+import com.maxprograms.xml.XMLUtils;
 
 public class ToOpenXliff {
 
@@ -58,6 +59,31 @@ public class ToOpenXliff {
 
     private static boolean isLevshaStyleInline(Element e) {
         return e.hasAttribute("equiv-text") || e.hasAttribute("ctype");
+    }
+
+    /**
+     * Build the historic OpenXLIFF ph-text shape {@code <x …>escaped-payload</x>} without
+     * {@link Element#toString()}, which re-serializes attribute values and collapses nested
+     * entity encoding ({@code &amp;lt;} → {@code &lt;}). FromOpenXliff.replaceTags parses this
+     * string back into an {@code <x>} so export can restore MemoQ {@code <ph>} wrappers.
+     */
+    private static String wrapLevshaInlineMarkup(String id, String equiv, String payload) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<x");
+        if (id != null && !id.isEmpty()) {
+            sb.append(" id=\"");
+            sb.append(XMLUtils.cleanText(id).replace("\"", "&quot;"));
+            sb.append('"');
+        }
+        if (equiv != null && !equiv.isEmpty()) {
+            sb.append(" equiv-text=\"");
+            sb.append(XMLUtils.cleanText(equiv).replace("\"", "&quot;"));
+            sb.append('"');
+        }
+        sb.append('>');
+        sb.append(XMLUtils.cleanText(payload));
+        sb.append("</x>");
+        return sb.toString();
     }
 
     private static String inlinePhId(Element e) {
@@ -756,18 +782,19 @@ public class ToOpenXliff {
                             || "bpt".equals(name) || "ept".equals(name) || "it".equals(name)) {
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
-                        // Levsha/MemoQ placeholders: keep opaque child text (mq:rxt payload).
-                        // Element.toString() re-serializes and collapses nested entities (&amp;lt;→&lt;).
+                        // Levsha/MemoQ placeholders: keep opaque child text (mq:rxt payload) inside
+                        // an <x> wrapper so FromOpenXliff.replaceTags can parse it. Do not use
+                        // Element.toString() for the payload — it collapses nested entities.
                         if (isLevshaStyleInline(e)) {
                             String payload = e.getText();
-                            if (payload != null && !payload.isEmpty()) {
-                                ph.setText(payload);
-                            } else {
-                                ph.setText(e.toString());
-                            }
                             String equiv = e.getAttributeValue("equiv-text", "");
                             if (equiv.isEmpty()) {
                                 equiv = e.getAttributeValue("equiv", "");
+                            }
+                            if (payload != null && !payload.isEmpty()) {
+                                ph.setText(wrapLevshaInlineMarkup(e.getAttributeValue("id", ""), equiv, payload));
+                            } else {
+                                ph.setText(e.toString());
                             }
                             if (!equiv.isEmpty()) {
                                 ph.setAttribute("equiv-text", equiv);
