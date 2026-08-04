@@ -478,8 +478,9 @@ public class ToXliff2 {
 				if (!"final".equals(segment.getAttributeValue("state", "initial"))) {
 					segment.setAttribute("state", "translated");
 				}
-			} else if (!"final".equals(segment.getAttributeValue("state", "initial"))) {
-				// Empty/tag-only targets used to wipe approved→final down to initial.
+			} else if (!hasTarget || !"final".equals(segment.getAttributeValue("state", "initial"))) {
+				// Empty/tag-only targets keep approved→final only when a <target> element
+				// exists: XLIFF 2.0 forbids state other than "initial" without a target.
 				segment.setAttribute("state", "initial");
 			}
 			if (hasTarget) {

@@ -141,10 +141,9 @@ public class ToOpenXliff {
         String charlimAttribute = params.get("charlimAttribute");
         String contextAttribute = params.get("contextAttribute");
         includeNonTranslatable = "yes".equalsIgnoreCase(params.get("includeNonTranslatable"));
-        // Preserve original TU id as x-identifier so callers can rematch after Convert.
-        if (idAttribute == null || idAttribute.isEmpty()) {
-            idAttribute = "id";
-        }
+        // idAttribute stays opt-in: callers that need the original TU id as x-identifier
+        // context (e.g. Swordfish rematch) pass "idAttribute=id" explicitly. Defaulting it
+        // here would silently add context-groups to every generic XLIFF conversion.
         try {
             SAXBuilder builder = new SAXBuilder();
             builder.setEntityResolver(CatalogBuilder.getCatalog(catalog));
@@ -518,10 +517,13 @@ public class ToOpenXliff {
             
             // Add maxlen attribute as context element for character limit
             String charlimValue = null;
-            for (Attribute a : unit.getAttributes()) {
-                if (a.getName().equals(charlimAttribute) || a.getName().endsWith(":" + charlimAttribute) || a.getName().endsWith(charlimAttribute)) {
-                    charlimValue = a.getValue();
-                    break;
+            if (hasCharlim) {
+                for (Attribute a : unit.getAttributes()) {
+                    if (a.getName().equals(charlimAttribute) || a.getName().endsWith(":" + charlimAttribute)
+                            || a.getName().endsWith(charlimAttribute)) {
+                        charlimValue = a.getValue();
+                        break;
+                    }
                 }
             }
             if (charlimValue != null) {

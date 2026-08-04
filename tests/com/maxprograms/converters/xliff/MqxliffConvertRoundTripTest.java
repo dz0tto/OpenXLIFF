@@ -43,6 +43,9 @@ public final class MqxliffConvertRoundTripTest {
 		testMergeRestoresPhPayloadsWithoutUnboundMq(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
+		testApprovedWithoutTargetStaysInitial(catalog);
+		testNoContextGroupWithoutIdAttribute(catalog);
+		testTsLockedPropagatesToSubState(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -214,6 +217,136 @@ public final class MqxliffConvertRoundTripTest {
 		} finally {
 			deleteRecursive(dir);
 		}
+	}
+
+	/**
+	 * XLIFF 2.0 forbids state other than "initial" on a segment without &lt;target&gt;.
+	 * ToOpenXliff always emits a target child, so this only happens when ToXliff2 runs
+	 * directly on a foreign XLIFF 1.2 file (Swordfish direct XLIFF import).
+	 */
+	private static void testApprovedWithoutTargetStaysInitial(Path catalog) throws Exception {
+		String name = "approved unit without target stays initial (valid XLIFF 2)";
+		Path dir = Files.createTempDirectory("oxlf-notarget-");
+		try {
+			Path src = dir.resolve("in.xlf");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="de" datatype="plaintext" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source>No target here</source>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = dir.resolve("out.xlf");
+			List<String> res = ToXliff2.run(src.toString(), x21.toString(), catalog.toString(), "2.1");
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "state=\"initial\"");
+			assertFalse(name + ": state=final emitted without a <target> element",
+					xml.contains("state=\"final\""));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** idAttribute must stay opt-in: generic conversions get no unit-context group. */
+	private static void testNoContextGroupWithoutIdAttribute(Path catalog) throws Exception {
+		String name = "no x-identifier context without idAttribute param";
+		Path dir = Files.createTempDirectory("oxlf-idattr-");
+		try {
+			Path src = dir.resolve("in.xlf");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="de" datatype="plaintext" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>Plain text</source>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			String without = Files.readString(runToOpenXliff(src, dir.resolve("without"), catalog, null));
+			assertFalse(name + ": x-identifier harvested with no idAttribute param",
+					without.contains("x-identifier"));
+
+			String with = Files.readString(runToOpenXliff(src, dir.resolve("with"), catalog, "id"));
+			assertContains(name + " (explicit param still works)", with, "x-identifier");
+			assertContains(name + " (explicit param still works)", with, "tu1");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Pins intended behavior: ts="locked" on a translatable unit locks the segment. */
+	private static void testTsLockedPropagatesToSubState(Path catalog) throws Exception {
+		String name = "ts=locked propagates to subState=openxliff:locked";
+		Path dir = Files.createTempDirectory("oxlf-tslock-");
+		try {
+			Path src = dir.resolve("in.xlf");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="de" datatype="plaintext" original="t">
+					  <body>
+					   <trans-unit id="tu1" ts="locked">
+					    <source>Locked but translatable</source>
+					    <target>Gesperrt</target>
+					   </trans-unit>
+					   <trans-unit id="tu2">
+					    <source>Editable</source>
+					    <target>Editierbar</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, false);
+			String xml = Files.readString(x21);
+			assertEquals(name + " locked segment count", 1, countOccurrences(xml, "openxliff:locked"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static Path runToOpenXliff(Path source, Path dir, Path catalog, String idAttribute) throws Exception {
+		Files.createDirectories(dir);
+		Path xliff12 = dir.resolve("open.xlf");
+		Path skeleton = dir.resolve("open.skl");
+		Files.copy(source, skeleton);
+		Map<String, String> params = new HashMap<>();
+		params.put("source", source.toAbsolutePath().toString());
+		params.put("xliff", xliff12.toAbsolutePath().toString());
+		params.put("skeleton", skeleton.toAbsolutePath().toString());
+		params.put("catalog", catalog.toString());
+		params.put("srcLang", "en");
+		params.put("tgtLang", "de");
+		if (idAttribute != null) {
+			params.put("idAttribute", idAttribute);
+		}
+		List<String> res = ToOpenXliff.run(params);
+		if (!Constants.SUCCESS.equals(res.get(0))) {
+			throw new IOException("ToOpenXliff failed: " + res);
+		}
+		return xliff12;
+	}
+
+	private static int countOccurrences(String haystack, String needle) {
+		int n = 0;
+		int idx = 0;
+		while ((idx = haystack.indexOf(needle, idx)) != -1) {
+			n++;
+			idx += needle.length();
+		}
+		return n;
 	}
 
 	private static Path convertToXliff21(Path source, Path dir, Path catalog, boolean includeNonTranslatable)
