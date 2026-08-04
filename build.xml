@@ -89,4 +89,23 @@
         </copy>
         <copy file="LICENSE" todir="dist" />
     </target>
+
+    <path id="OpenXLIFF.test.classpath">
+        <path refid="OpenXLIFF.classpath" />
+        <pathelement location="lib/openxliff.jar" />
+        <pathelement location="test-bin" />
+    </path>
+
+    <target name="test" depends="compile">
+        <description>Run MQXLIFF/Levsha Convert↔Merge regression tests</description>
+        <mkdir dir="test-bin" />
+        <javac srcdir="tests" destdir="test-bin" classpathref="OpenXLIFF.test.classpath"
+               includeAntRuntime="false" debug="true">
+            <compilerarg line="-encoding utf-8" />
+        </javac>
+        <java classname="com.maxprograms.converters.xliff.MqxliffConvertRoundTripTest"
+              classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true">
+            <arg value="${basedir}/catalog/catalog.xml" />
+        </java>
+    </target>
 </project>

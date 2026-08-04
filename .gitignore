@@ -5,3 +5,4 @@
 .vscode/launch.json
 .dccache
 /.vscode/
+test-bin/
