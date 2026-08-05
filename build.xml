@@ -107,5 +107,10 @@
               classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true">
             <arg value="${basedir}/catalog/catalog.xml" />
         </java>
+        <java classname="com.maxprograms.xliff2.ResegmenterLeadingWsTest"
+              classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true">
+            <arg value="${basedir}/catalog/catalog.xml" />
+            <arg value="${basedir}/srx/default.srx" />
+        </java>
     </target>
 </project>
