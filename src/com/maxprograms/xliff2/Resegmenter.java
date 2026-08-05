@@ -108,6 +108,7 @@ public class Resegmenter {
                     Element segSource = segmenter.segment(source);
                     int newSegments = segSource.getChildren("mrk").size();
                     int id = 0;
+                    int ignorableId = 0;
                     root.removeChild(segment);
                     List<XMLNode> content = segSource.getContent();
                     Iterator<XMLNode> it = content.iterator();
@@ -122,6 +123,7 @@ public class Resegmenter {
                                     Element firstTag = e.getChildren().get(0);
                                     if (!hasText(firstTag)) {
                                         Element ignorable = new Element("ignorable");
+                                        ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
                                         Element ignorableSource = new Element("source");
                                         ignorableSource.setAttribute("xml:space", "preserve");
                                         ignorable.addContent(ignorableSource);
@@ -130,6 +132,18 @@ public class Resegmenter {
                                         root.addContent(ignorable);
                                     }
                                 }
+                                // SRX leaves join whitespace on segment N+1; peel into <ignorable>
+                                // so editors see clean text and export rejoins via FromXliff2.
+                                String leadingWs = peelLeadingWhitespace(e);
+                                if (!leadingWs.isEmpty()) {
+                                    Element ignorable = new Element("ignorable");
+                                    ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
+                                    Element ignorableSource = new Element("source");
+                                    ignorableSource.setAttribute("xml:space", "preserve");
+                                    ignorableSource.addContent(leadingWs);
+                                    ignorable.addContent(ignorableSource);
+                                    root.addContent(ignorable);
+                                }
                                 Element lastIgnorable = null;
                                 if (surrounded || endsWithTag(e)) {
                                     // ends with tag
@@ -137,6 +151,7 @@ public class Resegmenter {
                                     Element lastTag = tags.get(tags.size() - 1);
                                     if (!hasText(lastTag)) {
                                         lastIgnorable = new Element("ignorable");
+                                        lastIgnorable.setAttribute("id", unitId + "-i" + ignorableId++);
                                         Element ignorableSource = new Element("source");
                                         ignorableSource.setAttribute("xml:space", "preserve");
                                         lastIgnorable.addContent(ignorableSource);
@@ -203,5 +218,46 @@ public class Resegmenter {
             }
         }
         return false;
+    }
+
+    /**
+     * Remove a leading run of join whitespace from {@code mrk} content and return it.
+     * SRX sentence breaks keep the after-break whitespace on the following part.
+     */
+    private static String peelLeadingWhitespace(Element mrk) {
+        List<XMLNode> content = mrk.getContent();
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        XMLNode first = content.get(0);
+        if (first.getNodeType() != XMLNode.TEXT_NODE) {
+            return "";
+        }
+        TextNode textNode = (TextNode) first;
+        String text = textNode.getText();
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        int i = 0;
+        while (i < text.length() && isJoinWhitespace(text.charAt(i))) {
+            i++;
+        }
+        if (i == 0) {
+            return "";
+        }
+        String leading = text.substring(0, i);
+        String rest = text.substring(i);
+        if (rest.isEmpty()) {
+            List<XMLNode> next = new ArrayList<>(content);
+            next.remove(0);
+            mrk.setContent(next);
+        } else {
+            textNode.setText(rest);
+        }
+        return leading;
+    }
+
+    private static boolean isJoinWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u00A0';
     }
 }
