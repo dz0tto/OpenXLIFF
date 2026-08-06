@@ -43,6 +43,7 @@ public final class ResegmenterLeadingWsTest {
 		testPeelsLeadingSpaceIntoIgnorable(catalogPath, srxPath);
 		testExportJoinRestoresSpace(catalogPath, srxPath);
 		testKeepsTagOnlySegment(catalogPath, srxPath);
+		testDoesNotPeelLeadingTags(catalogPath, srxPath);
 		if (Files.isRegularFile(newlinesSrx)) {
 			testKeepsTagOnlyFirstLineOnNewlines(catalogPath, newlinesSrx);
 		}
@@ -163,6 +164,47 @@ public final class ResegmenterLeadingWsTest {
 			assertContains(name, xml, "<ph id=\"1\"/");
 			// Must not demote the whole unit to ignorable-only.
 			assertContains(name, xml, "<segment id=\"s1\"");
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testDoesNotPeelLeadingTags(Path catalogPath, Path srxPath) throws Exception {
+		String name = "does not peel leading tags into ignorable";
+		Path dir = Files.createTempDirectory("oxlf-reseg-nopeel-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.txt" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1"/>Hello. World.</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), srxPath.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "<ph id=\"1\"/");
+			assertContains(name, xml, "Hello.");
+			// Leading ph must remain inside a segment source, not a peeled ignorable.
+			Pattern peeled = Pattern.compile(
+					"<ignorable[^>]*>\\s*<source[^>]*><ph id=\"1\"/></source>\\s*</ignorable>");
+			if (peeled.matcher(xml).find()) {
+				fail(name + ": leading ph was peeled into ignorable: " + xml);
+			}
+			int segPos = xml.indexOf("<segment");
+			int phPos = xml.indexOf("<ph id=\"1\"");
+			if (phPos < 0 || segPos < 0 || phPos < segPos) {
+				fail(name + ": leading ph not inside a segment: " + xml);
+			}
 		} finally {
 			deleteRecursive(dir);
 		}
