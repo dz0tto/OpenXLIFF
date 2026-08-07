@@ -46,6 +46,8 @@ public final class ResegmenterLeadingWsTest {
 		testDoesNotPeelLeadingTags(catalogPath, srxPath);
 		if (Files.isRegularFile(newlinesSrx)) {
 			testKeepsTagOnlyFirstLineOnNewlines(catalogPath, newlinesSrx);
+			testNewlinesThenSentenceSrx(catalogPath, srxPath, newlinesSrx);
+			testKeepsTagOnlyAfterConvertStylePh(catalogPath, newlinesSrx, srxPath);
 		}
 
 		if (failures > 0) {
@@ -248,6 +250,127 @@ public final class ResegmenterLeadingWsTest {
 		} finally {
 			deleteRecursive(dir);
 		}
+	}
+
+	/**
+	 * Convert-style {@code <ph dataRef>} tag-only lines must remain segments through
+	 * newlines then sentence SRX (never demoted to ignorable / dropped).
+	 */
+	private static void testKeepsTagOnlyAfterConvertStylePh(Path catalogPath, Path newlinesSrx, Path sentenceSrx)
+			throws Exception {
+		String name = "keeps Convert-style tag-only ph through newlines+sentence SRX";
+		Path dir = Files.createTempDirectory("oxlf-reseg-tagph-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <originalData>
+					    <data id="1">&lt;x id="x1"/&gt;</data>
+					   </originalData>
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1" dataRef="1" equiv="&lt;b/&gt;"/>\nHello. More.</source>
+					   </segment>
+					  </unit>
+					  <unit id="u2" canResegment="yes" translate="yes">
+					   <originalData>
+					    <data id="1">&lt;x id="x2"/&gt;</data>
+					   </originalData>
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1" dataRef="1" equiv="&lt;br/&gt;"/></source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			assertEquals(name + " newlines", Constants.SUCCESS,
+					Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog).get(0));
+			assertEquals(name + " sentences", Constants.SUCCESS,
+					Resegmenter.run(xliff.toString(), sentenceSrx.toString(), "en", catalog).get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "dataRef=\"1\"");
+			assertContains(name, xml, "Hello.");
+			// Tag-only first line and standalone tag-only unit must remain <segment>, not only ignorable.
+			if (!xml.contains("<ph") || countTag(xml, "<segment") < 3) {
+				fail(name + ": expected tag-only segments kept, got " + xml);
+			}
+			// Must not demote the standalone tag-only unit to ignorable-only.
+			assertContains(name, xml, "equiv=\"&lt;br/&gt;\"");
+			int u2 = xml.indexOf("id=\"u2\"");
+			if (u2 < 0) {
+				fail(name + ": missing unit u2");
+			}
+			String u2xml = xml.substring(u2);
+			if (!u2xml.contains("<segment")) {
+				fail(name + ": tag-only unit u2 lost its segment: " + u2xml);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * FULL mode: newlines-only.srx first, then default.srx must still split sentences
+	 * inside each line (units already have multiple segments after pass 1).
+	 */
+	private static void testNewlinesThenSentenceSrx(Path catalogPath, Path sentenceSrx, Path newlinesSrx)
+			throws Exception {
+		String name = "newlines then sentence SRX splits multi-segment units";
+		Path dir = Files.createTempDirectory("oxlf-reseg-twopass-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			// Keep the XML prolog at column 0; put the cell newline in via \n escape.
+			String body = """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve">First line only.\nSecond line. And another sentence.</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""";
+			Files.writeString(xliff, body, StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> pass1 = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " newlines status", Constants.SUCCESS, pass1.get(0));
+			String afterNewlines = Files.readString(xliff);
+			int afterNl = countTag(afterNewlines, "<segment");
+			if (afterNl < 2) {
+				fail(name + ": expected >=2 segments after newlines, got " + afterNl + " in " + afterNewlines);
+			}
+
+			List<String> pass2 = Resegmenter.run(xliff.toString(), sentenceSrx.toString(), "en", catalog);
+			assertEquals(name + " sentence status", Constants.SUCCESS, pass2.get(0));
+			String afterSentences = Files.readString(xliff);
+			int afterSr = countTag(afterSentences, "<segment");
+			if (afterSr < 3) {
+				fail(name + ": expected >=3 segments after sentence SRX, got " + afterSr + " in " + afterSentences);
+			}
+			assertContains(name, afterSentences, "First line only.");
+			assertContains(name, afterSentences, "Second line.");
+			assertContains(name, afterSentences, "And another sentence.");
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static int countTag(String xml, String tag) {
+		int count = 0;
+		int idx = 0;
+		while ((idx = xml.indexOf(tag, idx)) >= 0) {
+			count++;
+			idx += tag.length();
+		}
+		return count;
 	}
 
 	private static void assertEquals(String name, String expected, String actual) {
