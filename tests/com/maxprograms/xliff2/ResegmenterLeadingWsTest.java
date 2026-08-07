@@ -30,6 +30,7 @@ public final class ResegmenterLeadingWsTest {
 	public static void main(String[] args) throws Exception {
 		Path catalogPath = Path.of(args.length > 0 ? args[0] : "catalog/catalog.xml").toAbsolutePath();
 		Path srxPath = Path.of(args.length > 1 ? args[1] : "srx/default.srx").toAbsolutePath();
+		Path newlinesSrx = Path.of(args.length > 2 ? args[2] : "srx/default.srx").toAbsolutePath();
 		if (!Files.isRegularFile(catalogPath)) {
 			fail("catalog not found: " + catalogPath);
 			System.exit(1);
@@ -41,6 +42,11 @@ public final class ResegmenterLeadingWsTest {
 
 		testPeelsLeadingSpaceIntoIgnorable(catalogPath, srxPath);
 		testExportJoinRestoresSpace(catalogPath, srxPath);
+		testKeepsTagOnlySegment(catalogPath, srxPath);
+		testDoesNotPeelLeadingTags(catalogPath, srxPath);
+		if (Files.isRegularFile(newlinesSrx)) {
+			testKeepsTagOnlyFirstLineOnNewlines(catalogPath, newlinesSrx);
+		}
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -125,6 +131,119 @@ public final class ResegmenterLeadingWsTest {
 			}
 			if (!found) {
 				fail(name + ": no joined source with Hello/World");
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testKeepsTagOnlySegment(Path catalogPath, Path srxPath) throws Exception {
+		String name = "keeps tag-only unit as segment";
+		Path dir = Files.createTempDirectory("oxlf-reseg-tagonly-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.txt" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1"/></source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), srxPath.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "<segment");
+			assertContains(name, xml, "<ph id=\"1\"/");
+			// Must not demote the whole unit to ignorable-only.
+			assertContains(name, xml, "<segment id=\"s1\"");
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testDoesNotPeelLeadingTags(Path catalogPath, Path srxPath) throws Exception {
+		String name = "does not peel leading tags into ignorable";
+		Path dir = Files.createTempDirectory("oxlf-reseg-nopeel-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.txt" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1"/>Hello. World.</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), srxPath.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "<ph id=\"1\"/");
+			assertContains(name, xml, "Hello.");
+			// Leading ph must remain inside a segment source, not a peeled ignorable.
+			Pattern peeled = Pattern.compile(
+					"<ignorable[^>]*>\\s*<source[^>]*><ph id=\"1\"/></source>\\s*</ignorable>");
+			if (peeled.matcher(xml).find()) {
+				fail(name + ": leading ph was peeled into ignorable: " + xml);
+			}
+			int segPos = xml.indexOf("<segment");
+			int phPos = xml.indexOf("<ph id=\"1\"");
+			if (phPos < 0 || segPos < 0 || phPos < segPos) {
+				fail(name + ": leading ph not inside a segment: " + xml);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testKeepsTagOnlyFirstLineOnNewlines(Path catalogPath, Path newlinesSrx) throws Exception {
+		String name = "keeps tag-only first line as segment (newlines SRX)";
+		Path dir = Files.createTempDirectory("oxlf-reseg-tagline-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve"><ph id="1"/>\nHello</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "<ph id=\"1\"/");
+			assertContains(name, xml, ">Hello</source>");
+			// Tag-only first line must remain a segment (not only ignorable).
+			int segCount = 0;
+			int idx = 0;
+			while ((idx = xml.indexOf("<segment", idx)) >= 0) {
+				segCount++;
+				idx += 8;
+			}
+			if (segCount < 2) {
+				fail(name + ": expected >=2 segments, got " + segCount + " in " + xml);
 			}
 		} finally {
 			deleteRecursive(dir);

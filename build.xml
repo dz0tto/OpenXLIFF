@@ -111,6 +111,7 @@
               classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true">
             <arg value="${basedir}/catalog/catalog.xml" />
             <arg value="${basedir}/srx/default.srx" />
+            <arg value="${basedir}/srx/newlines-only.srx" />
         </java>
     </target>
 </project>

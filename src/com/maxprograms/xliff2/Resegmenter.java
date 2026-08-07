@@ -72,20 +72,6 @@ public class Resegmenter {
         return result;
     }
 
-    private static boolean startsWithTag(Element e) {
-        return e.getChildren().size() == 1 && e.getContent().get(0).getNodeType() == XMLNode.ELEMENT_NODE;
-    }
-
-    private static boolean endsWithTag(Element e) {
-        return e.getChildren().size() == 1
-                && e.getContent().get(e.getContent().size() - 1).getNodeType() == XMLNode.ELEMENT_NODE;
-    }
-
-    private static boolean surroundedWithTags(Element e) {
-        return e.getChildren().size() == 2 && e.getContent().get(0).getNodeType() == XMLNode.ELEMENT_NODE
-                && e.getContent().get(e.getContent().size() - 1).getNodeType() == XMLNode.ELEMENT_NODE;
-    }
-
     private static void recurse(Element root) throws SAXException, IOException, ParserConfigurationException {
         if ("file".equals(root.getName())) {
             canResegment = "yes".equals(root.getAttributeValue("canResegment", "yes"));
@@ -117,21 +103,8 @@ public class Resegmenter {
                         if (n.getNodeType() == XMLNode.ELEMENT_NODE) {
                             Element e = (Element) n;
                             if ("mrk".equals(e.getName()) && "seg".equals(e.getAttributeValue("mtype"))) {
-                                boolean surrounded = surroundedWithTags(e);
-                                if (surrounded || startsWithTag(e)) {
-                                    // starts with tag
-                                    Element firstTag = e.getChildren().get(0);
-                                    if (!hasText(firstTag)) {
-                                        Element ignorable = new Element("ignorable");
-                                        ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
-                                        Element ignorableSource = new Element("source");
-                                        ignorableSource.setAttribute("xml:space", "preserve");
-                                        ignorable.addContent(ignorableSource);
-                                        ignorableSource.addContent(firstTag);
-                                        e.removeChild(firstTag);
-                                        root.addContent(ignorable);
-                                    }
-                                }
+                                // Do not peel leading/trailing inline tags into <ignorable>.
+                                // Tags stay on the segment so translators see and manage them.
                                 // SRX leaves join whitespace on segment N+1; peel into <ignorable>
                                 // so editors see clean text and export rejoins via FromXliff2.
                                 String leadingWs = peelLeadingWhitespace(e);
@@ -144,23 +117,11 @@ public class Resegmenter {
                                     ignorable.addContent(ignorableSource);
                                     root.addContent(ignorable);
                                 }
-                                Element lastIgnorable = null;
-                                if (surrounded || endsWithTag(e)) {
-                                    // ends with tag
-                                    List<Element> tags = e.getChildren();
-                                    Element lastTag = tags.get(tags.size() - 1);
-                                    if (!hasText(lastTag)) {
-                                        lastIgnorable = new Element("ignorable");
-                                        lastIgnorable.setAttribute("id", unitId + "-i" + ignorableId++);
-                                        Element ignorableSource = new Element("source");
-                                        ignorableSource.setAttribute("xml:space", "preserve");
-                                        lastIgnorable.addContent(ignorableSource);
-                                        ignorableSource.addContent(lastTag);
-                                        e.removeChild(lastTag);
-                                    }
-                                }
                                 Element newSeg = new Element("segment");
-                                if (!hasText(e)) {
+                                // Whitespace-only join leftovers → ignorable. Tag-only content
+                                // (inline placeholders with no plain text) stays a segment so it
+                                // appears in the editor — same policy as the converters.
+                                if (!hasText(e) && !hasInlineTags(e)) {
                                     newSeg = new Element("ignorable");
                                 }
                                 newSeg.setAttribute("id", newSegments == 1 ? originalId : unitId + '-' + id++);
@@ -178,9 +139,6 @@ public class Resegmenter {
                                             source.getAttributeValue("xml:space", "default"));
                                     newSeg.addContent(newTarget);
                                     newTarget.addContent(e.getContent());
-                                }
-                                if (lastIgnorable != null) {
-                                    root.addContent(lastIgnorable);
                                 }
                             } else {
                                 MessageFormat mf = new MessageFormat(Messages.getString("Resegmenter.2"));
@@ -218,6 +176,15 @@ public class Resegmenter {
             }
         }
         return false;
+    }
+
+    /** True when the element contains any inline markup children (ph/pc/x/…). */
+    private static boolean hasInlineTags(Element e) {
+        if (e == null) {
+            return false;
+        }
+        List<Element> children = e.getChildren();
+        return children != null && !children.isEmpty();
     }
 
     /**
