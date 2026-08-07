@@ -134,7 +134,7 @@ public class Resegmenter {
             String originalId = el.getAttributeValue("id");
             Element segSource = segmenter.segment(source);
             int newSegments = segSource.getChildren("mrk").size();
-            changed = true;
+            int emittedBefore = rebuilt.size();
 
             List<XMLNode> content = segSource.getContent();
             Iterator<XMLNode> it = content.iterator();
@@ -150,6 +150,23 @@ public class Resegmenter {
                     // SRX leaves join whitespace on segment N+1; peel into <ignorable>
                     // so editors see clean text and export rejoins via FromXliff2.
                     String leadingWs = peelLeadingWhitespace(e);
+                    boolean tagOnly = hasInlineTags(e);
+                    boolean textOnlyBlank = !hasText(e) && !tagOnly;
+                    if (textOnlyBlank) {
+                        // Empty / whitespace-only SRX leftover (e.g. blank line between
+                        // newlines). Keep peeled join space as ignorable; skip empty bits.
+                        if (!leadingWs.isEmpty()) {
+                            Element ignorable = new Element("ignorable");
+                            ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
+                            Element ignorableSource = new Element("source");
+                            ignorableSource.setAttribute("xml:space", "preserve");
+                            ignorableSource.addContent(leadingWs);
+                            ignorable.addContent(ignorableSource);
+                            rebuilt.add(ignorable);
+                            changed = true;
+                        }
+                        continue;
+                    }
                     if (!leadingWs.isEmpty()) {
                         Element ignorable = new Element("ignorable");
                         ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
@@ -159,21 +176,15 @@ public class Resegmenter {
                         ignorable.addContent(ignorableSource);
                         rebuilt.add(ignorable);
                     }
+                    // Tag-only (inline placeholders, no plain text) stays a <segment>
+                    // so it appears in the editor — same policy as the converters.
                     Element newSeg = new Element("segment");
-                    // Whitespace-only join leftovers → ignorable. Tag-only content
-                    // (inline placeholders with no plain text) stays a segment so it
-                    // appears in the editor — same policy as the converters.
-                    if (!hasText(e) && !hasInlineTags(e)) {
-                        newSeg = new Element("ignorable");
-                    }
                     boolean keepOriginalId = newSegments == 1 && inputSegments == 1;
                     newSeg.setAttribute("id", keepOriginalId ? originalId : unitId + '-' + id++);
                     rebuilt.add(newSeg);
+                    changed = true;
                     Element newSource = new Element("source");
                     newSource.setAttribute("xml:space", source.getAttributeValue("xml:space", "default"));
-                    if ("ignorable".equals(newSeg.getName())) {
-                        newSource.setAttribute("xml:space", "preserve");
-                    }
                     newSeg.addContent(newSource);
                     newSource.addContent(e.getContent());
                     if (isSourceCopy) {
@@ -187,6 +198,10 @@ public class Resegmenter {
                     MessageFormat mf = new MessageFormat(Messages.getString("Resegmenter.2"));
                     throw new SAXException(mf.format(new String[] { e.toString() }));
                 }
+            }
+            // If SRX produced nothing usable, keep the original segment (never drop tags).
+            if (rebuilt.size() == emittedBefore) {
+                rebuilt.add(el);
             }
         }
 
@@ -216,13 +231,26 @@ public class Resegmenter {
         return false;
     }
 
-    /** True when the element contains any inline markup children (ph/pc/x/…). */
+    /**
+     * True when the element contains any inline markup (ph/pc/x/…), including nested
+     * placeholders. Tag-only SRX pieces must stay visible segments.
+     */
     private static boolean hasInlineTags(Element e) {
         if (e == null) {
             return false;
         }
-        List<Element> children = e.getChildren();
-        return children != null && !children.isEmpty();
+        List<XMLNode> content = e.getContent();
+        if (content == null) {
+            return false;
+        }
+        Iterator<XMLNode> it = content.iterator();
+        while (it.hasNext()) {
+            XMLNode node = it.next();
+            if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

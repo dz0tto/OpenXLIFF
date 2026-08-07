@@ -261,7 +261,8 @@ public class ToOpenXliff {
                 sourcetags = new Vector<>();
                 source.setContent(getContent2x(src, true));
                 if (!hasTranslatableText(source)) {
-                    return;
+                    // Skip this segment only — do not abort the rest of the file.
+                    continue;
                 }
                 unit.addContent(source);
                 Element target = new Element("target");
@@ -671,7 +672,8 @@ public class ToOpenXliff {
                             tag = 1;
                             source.setContent(getContent1x(e));
                             if (!hasTranslatableText(source)) {
-                                return;
+                                // Skip this mrk only — sibling segments/units must still convert.
+                                continue;
                             }
                             unit.addContent(source);
                             Element target = new Element("target");
@@ -708,6 +710,7 @@ public class ToOpenXliff {
                 tag = 1;
                 source.setContent(getContent1x(root.getChild("source")));
                 if (!hasTranslatableText(source)) {
+                    // Skip this trans-unit; recurse1x is invoked per element so siblings still run.
                     return;
                 }
                 unit.addContent(source);
