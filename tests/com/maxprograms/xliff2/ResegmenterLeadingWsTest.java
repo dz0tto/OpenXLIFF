@@ -46,6 +46,7 @@ public final class ResegmenterLeadingWsTest {
 		testDoesNotPeelLeadingTags(catalogPath, srxPath);
 		if (Files.isRegularFile(newlinesSrx)) {
 			testKeepsTagOnlyFirstLineOnNewlines(catalogPath, newlinesSrx);
+			testNewlinesThenSentenceSrx(catalogPath, srxPath, newlinesSrx);
 		}
 
 		if (failures > 0) {
@@ -248,6 +249,65 @@ public final class ResegmenterLeadingWsTest {
 		} finally {
 			deleteRecursive(dir);
 		}
+	}
+
+	/**
+	 * FULL mode: newlines-only.srx first, then default.srx must still split sentences
+	 * inside each line (units already have multiple segments after pass 1).
+	 */
+	private static void testNewlinesThenSentenceSrx(Path catalogPath, Path sentenceSrx, Path newlinesSrx)
+			throws Exception {
+		String name = "newlines then sentence SRX splits multi-segment units";
+		Path dir = Files.createTempDirectory("oxlf-reseg-twopass-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			// Keep the XML prolog at column 0; put the cell newline in via \n escape.
+			String body = """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve">First line only.\nSecond line. And another sentence.</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""";
+			Files.writeString(xliff, body, StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> pass1 = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " newlines status", Constants.SUCCESS, pass1.get(0));
+			String afterNewlines = Files.readString(xliff);
+			int afterNl = countTag(afterNewlines, "<segment");
+			if (afterNl < 2) {
+				fail(name + ": expected >=2 segments after newlines, got " + afterNl + " in " + afterNewlines);
+			}
+
+			List<String> pass2 = Resegmenter.run(xliff.toString(), sentenceSrx.toString(), "en", catalog);
+			assertEquals(name + " sentence status", Constants.SUCCESS, pass2.get(0));
+			String afterSentences = Files.readString(xliff);
+			int afterSr = countTag(afterSentences, "<segment");
+			if (afterSr < 3) {
+				fail(name + ": expected >=3 segments after sentence SRX, got " + afterSr + " in " + afterSentences);
+			}
+			assertContains(name, afterSentences, "First line only.");
+			assertContains(name, afterSentences, "Second line.");
+			assertContains(name, afterSentences, "And another sentence.");
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static int countTag(String xml, String tag) {
+		int count = 0;
+		int idx = 0;
+		while ((idx = xml.indexOf(tag, idx)) >= 0) {
+			count++;
+			idx += tag.length();
+		}
+		return count;
 	}
 
 	private static void assertEquals(String name, String expected, String actual) {

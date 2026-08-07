@@ -82,71 +82,10 @@ public class Resegmenter {
         }
         if ("unit".equals(root.getName())) {
             boolean hasMatches = !root.getChildren("mtc:matches").isEmpty();
-            if (translate && canResegment && !hasMatches && root.getChildren("segment").size() == 1) {
-                Element segment = root.getChild("segment");
-                String originalId = segment.getAttributeValue("id");
-                String unitId = root.getAttributeValue("id");
-                Element source = segment.getChild("source");
-                Element target = segment.getChild("target");
-                boolean isSourceCopy = target != null && source.getContent().equals(target.getContent());
-                boolean isEmpty = target != null && target.getContent().isEmpty();
-                if (target == null || isSourceCopy || isEmpty) {
-                    Element segSource = segmenter.segment(source);
-                    int newSegments = segSource.getChildren("mrk").size();
-                    int id = 0;
-                    int ignorableId = 0;
-                    root.removeChild(segment);
-                    List<XMLNode> content = segSource.getContent();
-                    Iterator<XMLNode> it = content.iterator();
-                    while (it.hasNext()) {
-                        XMLNode n = it.next();
-                        if (n.getNodeType() == XMLNode.ELEMENT_NODE) {
-                            Element e = (Element) n;
-                            if ("mrk".equals(e.getName()) && "seg".equals(e.getAttributeValue("mtype"))) {
-                                // Do not peel leading/trailing inline tags into <ignorable>.
-                                // Tags stay on the segment so translators see and manage them.
-                                // SRX leaves join whitespace on segment N+1; peel into <ignorable>
-                                // so editors see clean text and export rejoins via FromXliff2.
-                                String leadingWs = peelLeadingWhitespace(e);
-                                if (!leadingWs.isEmpty()) {
-                                    Element ignorable = new Element("ignorable");
-                                    ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
-                                    Element ignorableSource = new Element("source");
-                                    ignorableSource.setAttribute("xml:space", "preserve");
-                                    ignorableSource.addContent(leadingWs);
-                                    ignorable.addContent(ignorableSource);
-                                    root.addContent(ignorable);
-                                }
-                                Element newSeg = new Element("segment");
-                                // Whitespace-only join leftovers → ignorable. Tag-only content
-                                // (inline placeholders with no plain text) stays a segment so it
-                                // appears in the editor — same policy as the converters.
-                                if (!hasText(e) && !hasInlineTags(e)) {
-                                    newSeg = new Element("ignorable");
-                                }
-                                newSeg.setAttribute("id", newSegments == 1 ? originalId : unitId + '-' + id++);
-                                root.addContent(newSeg);
-                                Element newSource = new Element("source");
-                                newSource.setAttribute("xml:space", source.getAttributeValue("xml:space", "default"));
-                                if ("ignorable".equals(newSeg.getName())) {
-                                    newSource.setAttribute("xml:space", "preserve");
-                                }
-                                newSeg.addContent(newSource);
-                                newSource.addContent(e.getContent());
-                                if (isSourceCopy) {
-                                    Element newTarget = new Element("target");
-                                    newTarget.setAttribute("xml:space",
-                                            source.getAttributeValue("xml:space", "default"));
-                                    newSeg.addContent(newTarget);
-                                    newTarget.addContent(e.getContent());
-                                }
-                            } else {
-                                MessageFormat mf = new MessageFormat(Messages.getString("Resegmenter.2"));
-                                throw new SAXException(mf.format(new String[] { e.toString() }));
-                            }
-                        }
-                    }
-                }
+            // Resegment every eligible segment — including units that already have more
+            // than one segment (e.g. after a newlines-only SRX pass, before sentence SRX).
+            if (translate && canResegment && !hasMatches && !root.getChildren("segment").isEmpty()) {
+                resegmentUnit(root);
             }
         } else {
             List<Element> children = root.getChildren();
@@ -154,6 +93,105 @@ public class Resegmenter {
             while (it.hasNext()) {
                 recurse(it.next());
             }
+        }
+    }
+
+    private static void resegmentUnit(Element unit) throws SAXException, IOException, ParserConfigurationException {
+        String unitId = unit.getAttributeValue("id");
+        List<XMLNode> original = new ArrayList<>(unit.getContent());
+        List<XMLNode> rebuilt = new ArrayList<>();
+        int id = 0;
+        int ignorableId = 0;
+        boolean changed = false;
+        int inputSegments = unit.getChildren("segment").size();
+
+        for (XMLNode node : original) {
+            if (node.getNodeType() != XMLNode.ELEMENT_NODE) {
+                rebuilt.add(node);
+                continue;
+            }
+            Element el = (Element) node;
+            if (!"segment".equals(el.getName())) {
+                rebuilt.add(el);
+                continue;
+            }
+
+            Element source = el.getChild("source");
+            Element target = el.getChild("target");
+            boolean isSourceCopy = target != null && source.getContent().equals(target.getContent());
+            boolean isEmpty = target != null && target.getContent().isEmpty();
+            if (target != null && !isSourceCopy && !isEmpty) {
+                // Translated target present — leave content, but renumber when the unit
+                // is being rebuilt so ids stay unique alongside newly split segments.
+                if (inputSegments > 1) {
+                    el.setAttribute("id", unitId + '-' + id++);
+                    changed = true;
+                }
+                rebuilt.add(el);
+                continue;
+            }
+
+            String originalId = el.getAttributeValue("id");
+            Element segSource = segmenter.segment(source);
+            int newSegments = segSource.getChildren("mrk").size();
+            changed = true;
+
+            List<XMLNode> content = segSource.getContent();
+            Iterator<XMLNode> it = content.iterator();
+            while (it.hasNext()) {
+                XMLNode n = it.next();
+                if (n.getNodeType() != XMLNode.ELEMENT_NODE) {
+                    continue;
+                }
+                Element e = (Element) n;
+                if ("mrk".equals(e.getName()) && "seg".equals(e.getAttributeValue("mtype"))) {
+                    // Do not peel leading/trailing inline tags into <ignorable>.
+                    // Tags stay on the segment so translators see and manage them.
+                    // SRX leaves join whitespace on segment N+1; peel into <ignorable>
+                    // so editors see clean text and export rejoins via FromXliff2.
+                    String leadingWs = peelLeadingWhitespace(e);
+                    if (!leadingWs.isEmpty()) {
+                        Element ignorable = new Element("ignorable");
+                        ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
+                        Element ignorableSource = new Element("source");
+                        ignorableSource.setAttribute("xml:space", "preserve");
+                        ignorableSource.addContent(leadingWs);
+                        ignorable.addContent(ignorableSource);
+                        rebuilt.add(ignorable);
+                    }
+                    Element newSeg = new Element("segment");
+                    // Whitespace-only join leftovers → ignorable. Tag-only content
+                    // (inline placeholders with no plain text) stays a segment so it
+                    // appears in the editor — same policy as the converters.
+                    if (!hasText(e) && !hasInlineTags(e)) {
+                        newSeg = new Element("ignorable");
+                    }
+                    boolean keepOriginalId = newSegments == 1 && inputSegments == 1;
+                    newSeg.setAttribute("id", keepOriginalId ? originalId : unitId + '-' + id++);
+                    rebuilt.add(newSeg);
+                    Element newSource = new Element("source");
+                    newSource.setAttribute("xml:space", source.getAttributeValue("xml:space", "default"));
+                    if ("ignorable".equals(newSeg.getName())) {
+                        newSource.setAttribute("xml:space", "preserve");
+                    }
+                    newSeg.addContent(newSource);
+                    newSource.addContent(e.getContent());
+                    if (isSourceCopy) {
+                        Element newTarget = new Element("target");
+                        newTarget.setAttribute("xml:space",
+                                source.getAttributeValue("xml:space", "default"));
+                        newSeg.addContent(newTarget);
+                        newTarget.addContent(e.getContent());
+                    }
+                } else {
+                    MessageFormat mf = new MessageFormat(Messages.getString("Resegmenter.2"));
+                    throw new SAXException(mf.format(new String[] { e.toString() }));
+                }
+            }
+        }
+
+        if (changed) {
+            unit.setContent(rebuilt);
         }
     }
 
