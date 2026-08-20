@@ -752,8 +752,8 @@ Dónde:
       <target>El archivo seleccionado no es un documento XLIFF</target>
       </trans-unit>
       <trans-unit resname="Merge.10" approved="yes" xml:space="preserve" id="92">
-      <source>Unsupported XLIFF file</source>
-      <target>Archivo XLIFF no compatible</target>
+      <source>Unsupported XLIFF file: datatype=''{0}'' original=''{1}''</source>
+      <target>Archivo XLIFF no compatible: datatype=''{0}'' original=''{1}''</target>
       </trans-unit>
       <trans-unit resname="Merge.11" approved="yes" xml:space="preserve" id="93">
       <source>Error merging XLIFF</source>

@@ -156,43 +156,44 @@ public class Resegmenter {
                         // Empty / whitespace-only SRX leftover (e.g. blank line between
                         // newlines). Keep peeled join space as ignorable; skip empty bits.
                         if (!leadingWs.isEmpty()) {
-                            Element ignorable = new Element("ignorable");
-                            ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
-                            Element ignorableSource = new Element("source");
-                            ignorableSource.setAttribute("xml:space", "preserve");
-                            ignorableSource.addContent(leadingWs);
-                            ignorable.addContent(ignorableSource);
-                            rebuilt.add(ignorable);
+                            rebuilt.add(makeIgnorable(unitId, ignorableId++, leadingWs));
                             changed = true;
                         }
                         continue;
                     }
                     if (!leadingWs.isEmpty()) {
-                        Element ignorable = new Element("ignorable");
-                        ignorable.setAttribute("id", unitId + "-i" + ignorableId++);
-                        Element ignorableSource = new Element("source");
-                        ignorableSource.setAttribute("xml:space", "preserve");
-                        ignorableSource.addContent(leadingWs);
-                        ignorable.addContent(ignorableSource);
-                        rebuilt.add(ignorable);
+                        rebuilt.add(makeIgnorable(unitId, ignorableId++, leadingWs));
                     }
                     // Tag-only (inline placeholders, no plain text) stays a <segment>
                     // so it appears in the editor — same policy as the converters.
                     Element newSeg = new Element("segment");
                     boolean keepOriginalId = newSegments == 1 && inputSegments == 1;
                     newSeg.setAttribute("id", keepOriginalId ? originalId : unitId + '-' + id++);
-                    rebuilt.add(newSeg);
                     changed = true;
                     Element newSource = new Element("source");
                     newSource.setAttribute("xml:space", source.getAttributeValue("xml:space", "default"));
                     newSeg.addContent(newSource);
                     newSource.addContent(e.getContent());
+                    Element newTarget = null;
                     if (isSourceCopy) {
-                        Element newTarget = new Element("target");
+                        newTarget = new Element("target");
                         newTarget.setAttribute("xml:space",
                                 source.getAttributeValue("xml:space", "default"));
                         newSeg.addContent(newTarget);
                         newTarget.addContent(e.getContent());
+                    }
+                    // Newline SRX (beforebreak) leaves the break at the end of
+                    // segment N. Peel only line-break chars into a following
+                    // <ignorable> so the editor source stays clean and export
+                    // restores every separator via FromXliff2. Do not peel
+                    // spaces — sentence SRX keeps those on N+1 for the leading peel.
+                    String trailingBreaks = peelTrailingLineBreaks(newSource);
+                    if (!trailingBreaks.isEmpty() && newTarget != null) {
+                        peelTrailingLineBreaks(newTarget);
+                    }
+                    rebuilt.add(newSeg);
+                    if (!trailingBreaks.isEmpty()) {
+                        rebuilt.add(makeIgnorable(unitId, ignorableId++, trailingBreaks));
                     }
                 } else {
                     MessageFormat mf = new MessageFormat(Messages.getString("Resegmenter.2"));
@@ -292,5 +293,58 @@ public class Resegmenter {
 
     private static boolean isJoinWhitespace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u00A0';
+    }
+
+    /**
+     * Remove a trailing run of line-break characters from {@code container} and
+     * return it. Spaces and tabs stay on the segment so sentence SRX is unchanged.
+     */
+    private static String peelTrailingLineBreaks(Element container) {
+        List<XMLNode> content = container.getContent();
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        for (int i = content.size() - 1; i >= 0; i--) {
+            XMLNode node = content.get(i);
+            if (node.getNodeType() != XMLNode.TEXT_NODE) {
+                return "";
+            }
+            TextNode textNode = (TextNode) node;
+            String text = textNode.getText();
+            if (text == null || text.isEmpty()) {
+                continue;
+            }
+            int end = text.length();
+            while (end > 0 && isLineBreakChar(text.charAt(end - 1))) {
+                end--;
+            }
+            if (end == text.length()) {
+                return "";
+            }
+            String peeled = text.substring(end);
+            if (end == 0) {
+                List<XMLNode> next = new ArrayList<>(content);
+                next.remove(i);
+                container.setContent(next);
+            } else {
+                textNode.setText(text.substring(0, end));
+            }
+            return peeled;
+        }
+        return "";
+    }
+
+    private static boolean isLineBreakChar(char c) {
+        return c == '\n' || c == '\r' || c == '\u2028' || c == '\u2029';
+    }
+
+    private static Element makeIgnorable(String unitId, int ignorableId, String text) {
+        Element ignorable = new Element("ignorable");
+        ignorable.setAttribute("id", unitId + "-i" + ignorableId);
+        Element ignorableSource = new Element("source");
+        ignorableSource.setAttribute("xml:space", "preserve");
+        ignorableSource.addContent(text);
+        ignorable.addContent(ignorableSource);
+        return ignorable;
     }
 }

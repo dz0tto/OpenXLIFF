@@ -48,7 +48,10 @@ public final class ResegmenterLeadingWsTest {
 			testKeepsTagOnlyFirstLineOnNewlines(catalogPath, newlinesSrx);
 			testNewlinesThenSentenceSrx(catalogPath, srxPath, newlinesSrx);
 			testKeepsTagOnlyAfterConvertStylePh(catalogPath, newlinesSrx, srxPath);
+			testPeelsTrailingNewlineIntoIgnorable(catalogPath, newlinesSrx);
+			testPeelsMultipleNewlinesIntoIgnorable(catalogPath, newlinesSrx);
 			testExportJoinRestoresNewlineBetweenAdjacentSegments(catalogPath, newlinesSrx);
+			testExportJoinRestoresDoubleNewlineFromIgnorables(catalogPath, newlinesSrx);
 		}
 		testExportJoinRestoresNewlineFromSourceTrailingBreak(catalogPath);
 		testExportJoinDoesNotInventNewlineBetweenAdjacentSegments(catalogPath);
@@ -367,6 +370,91 @@ public final class ResegmenterLeadingWsTest {
 	}
 
 	/**
+	 * Newline SRX leaves the break on segment N; peel it into a following
+	 * {@code <ignorable>} so the editor source has no trailing newline.
+	 */
+	private static void testPeelsTrailingNewlineIntoIgnorable(Path catalogPath, Path newlinesSrx) throws Exception {
+		String name = "peels trailing newline into following ignorable";
+		Path dir = Files.createTempDirectory("oxlf-reseg-trail-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve">First line\nSecond line</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, ">First line</source>");
+			assertContains(name, xml, ">Second line</source>");
+			assertContains(name, xml, "<ignorable");
+			assertNotContains(name, xml, ">First line\n</source>");
+			if (countTag(xml, "<segment") < 2) {
+				fail(name + ": expected 2 segments in " + xml);
+			}
+			if (countIgnorableNewlines(xml) < 1) {
+				fail(name + ": expected a newline ignorable in " + xml);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Several newlines between lines must all leave the segment sources and live
+	 * in ignorables (single or multiple) so export can restore the same run.
+	 */
+	private static void testPeelsMultipleNewlinesIntoIgnorable(Path catalogPath, Path newlinesSrx) throws Exception {
+		String name = "peels multiple newlines out of segment sources";
+		Path dir = Files.createTempDirectory("oxlf-reseg-multinl-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve">First line\n\nSecond line</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, ">First line</source>");
+			assertContains(name, xml, ">Second line</source>");
+			assertNotContains(name, xml, ">First line\n</source>");
+			assertNotContains(name, xml, ">First line\n\n</source>");
+			if (countTag(xml, "<segment") != 2) {
+				fail(name + ": expected 2 segments, got " + countTag(xml, "<segment") + " in " + xml);
+			}
+			if (countIgnorableNewlines(xml) < 2) {
+				fail(name + ": expected at least 2 newline chars in ignorables, got "
+						+ countIgnorableNewlines(xml) + " in " + xml);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
 	 * After newline segmentation, translated line segments must rejoin with {@code \\n}.
 	 */
 	private static void testExportJoinRestoresNewlineBetweenAdjacentSegments(Path catalogPath, Path newlinesSrx)
@@ -419,6 +507,59 @@ public final class ResegmenterLeadingWsTest {
 			}
 			if (!found) {
 				fail(name + ": no joined target with both lines: " + xml12);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Two newlines between lines must reappear on convert-back from ignorables,
+	 * even when the translator targets have no trailing break.
+	 */
+	private static void testExportJoinRestoresDoubleNewlineFromIgnorables(Path catalogPath, Path newlinesSrx)
+			throws Exception {
+		String name = "FromXliff2 join restores double newline from ignorables";
+		Path dir = Files.createTempDirectory("oxlf-reseg-dblnl-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="ru">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="preserve">First line\n\nSecond line</source>
+					    <target xml:space="preserve">First line\n\nSecond line</target>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), newlinesSrx.toString(), "en", catalog);
+			assertEquals(name + " reseg status", Constants.SUCCESS, res.get(0));
+
+			String split = Files.readString(xliff);
+			split = split.replace(">First line</target>", ">Первая строка</target>");
+			split = split.replace(">First line\n</target>", ">Первая строка</target>");
+			split = split.replace(">Second line</target>", ">Вторая строка</target>");
+			Files.writeString(xliff, split, StandardCharsets.UTF_8);
+
+			Path out12 = dir.resolve("out12.xlf");
+			List<String> from = FromXliff2.run(xliff.toString(), out12.toString(), catalogPath.toString());
+			assertEquals(name + " from2 status", Constants.SUCCESS, from.get(0));
+
+			String xml12 = Files.readString(out12);
+			if (!xml12.contains("Первая строка\n\nВторая строка")) {
+				fail(name + ": joined target missing double newline: " + xml12);
+			}
+			if (!xml12.contains("First line\n\nSecond line")) {
+				fail(name + ": joined source missing original double newline: " + xml12);
+			}
+			if (xml12.contains("First line\n\n\nSecond line")) {
+				fail(name + ": joined source invented an extra newline: " + xml12);
 			}
 		} finally {
 			deleteRecursive(dir);
@@ -514,6 +655,34 @@ public final class ResegmenterLeadingWsTest {
 		} finally {
 			deleteRecursive(dir);
 		}
+	}
+
+	private static int countIgnorableNewlines(String xml) {
+		int total = 0;
+		int idx = 0;
+		while ((idx = xml.indexOf("<ignorable", idx)) >= 0) {
+			int end = xml.indexOf("</ignorable>", idx);
+			if (end < 0) {
+				break;
+			}
+			String body = xml.substring(idx, end);
+			int src = body.indexOf("<source");
+			int srcClose = body.indexOf("</source>");
+			if (src >= 0 && srcClose > src) {
+				int gt = body.indexOf('>', src);
+				if (gt >= 0 && gt < srcClose) {
+					String text = body.substring(gt + 1, srcClose);
+					for (int i = 0; i < text.length(); i++) {
+						char c = text.charAt(i);
+						if (c == '\n' || c == '\r' || c == '\u2028' || c == '\u2029') {
+							total++;
+						}
+					}
+				}
+			}
+			idx = end + 12;
+		}
+		return total;
 	}
 
 	private static int countTag(String xml, String tag) {
