@@ -262,6 +262,7 @@ public class Merge {
 				params.put("encoding", encoding);
 				params.put("catalog", catalog);
 				params.put("format", pair[1]);
+				params.put("original", file);
 				paramsList.add(params);
 			}
 			for (int i = 0; i < paramsList.size(); i++) {
@@ -439,7 +440,10 @@ public class Merge {
 				result = FromOpenXliff.run(params);
 			} else {
 				result.add(Constants.ERROR);
-				result.add(Messages.getString("Merge.10"));
+				MessageFormat mf = new MessageFormat(Messages.getString("Merge.10"));
+				String original = params.get("original");
+				result.add(mf.format(new String[] { dataType != null ? dataType : "",
+						original != null ? original : "" }));
 			}
 			if (temporary != null) {
 				Files.delete(Paths.get(temporary.toURI()));
