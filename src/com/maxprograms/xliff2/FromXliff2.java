@@ -305,16 +305,17 @@ public class FromXliff2 {
 					String leadingSrcBreaks = leadingLineBreaks(src);
 					// Restore a break only when the source still shows one (newline SRX).
 					// Do not invent a newline between ordinary adjacent segments.
-					if (prevWasSegment && isSegment) {
-						if (!prevSourceBreaks.isEmpty()) {
-							if (prevTargetBreaks.isEmpty()) {
-								joinedTarget.addContent(prevSourceBreaks);
-								preserve = true;
-							}
-						} else if (!leadingSrcBreaks.isEmpty() && leadingLineBreaks(tgt).isEmpty()) {
-							joinedTarget.addContent(leadingSrcBreaks);
-							preserve = true;
-						}
+					// Also fire when the next sibling is an <ignorable>: leftover
+					// trailing breaks on segment N (Excel _x000D_ restored after SRX,
+					// or a peel that missed) must still reach the target, otherwise
+					// only the ignorable's own break survives convert-back.
+					if (prevWasSegment && !prevSourceBreaks.isEmpty() && prevTargetBreaks.isEmpty()) {
+						joinedTarget.addContent(prevSourceBreaks);
+						preserve = true;
+					} else if (prevWasSegment && isSegment && !leadingSrcBreaks.isEmpty()
+							&& leadingLineBreaks(tgt).isEmpty()) {
+						joinedTarget.addContent(leadingSrcBreaks);
+						preserve = true;
 					}
 					if (src.getAttributeValue("xml:space", "default").equals("preserve")) {
 						preserve = true;
