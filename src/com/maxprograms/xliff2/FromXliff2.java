@@ -37,6 +37,7 @@ import com.maxprograms.xml.Element;
 import com.maxprograms.xml.Indenter;
 import com.maxprograms.xml.PI;
 import com.maxprograms.xml.SAXBuilder;
+import com.maxprograms.xml.TextNode;
 import com.maxprograms.xml.XMLNode;
 import com.maxprograms.xml.XMLOutputter;
 import com.maxprograms.xml.XMLUtils;
@@ -291,15 +292,34 @@ public class FromXliff2 {
 
 			List<Element> children = source.getChildren();
 			Iterator<Element> et = children.iterator();
+			boolean prevWasSegment = false;
+			String prevSourceBreaks = "";
+			String prevTargetBreaks = "";
 			while (et.hasNext()) {
 				Element child = et.next();
 				if (child.getName().equals("segment") || child.getName().equals("ignorable")) {
+					boolean isSegment = child.getName().equals("segment");
 					Element src = child.getChild("source");
+					Element tgt = child.getChild("target");
+					String srcBreaks = trailingLineBreaks(src);
+					String leadingSrcBreaks = leadingLineBreaks(src);
+					// Restore a break only when the source still shows one (newline SRX).
+					// Do not invent a newline between ordinary adjacent segments.
+					if (prevWasSegment && isSegment) {
+						if (!prevSourceBreaks.isEmpty()) {
+							if (prevTargetBreaks.isEmpty()) {
+								joinedTarget.addContent(prevSourceBreaks);
+								preserve = true;
+							}
+						} else if (!leadingSrcBreaks.isEmpty() && leadingLineBreaks(tgt).isEmpty()) {
+							joinedTarget.addContent(leadingSrcBreaks);
+							preserve = true;
+						}
+					}
 					if (src.getAttributeValue("xml:space", "default").equals("preserve")) {
 						preserve = true;
 					}
 					joinedSource.addContent(src.getContent());
-					Element tgt = child.getChild("target");
 					if (tgt != null) {
 						hasTarget = true;
 						joinedTarget.addContent(tgt.getContent());
@@ -307,9 +327,12 @@ public class FromXliff2 {
 					if (tgt == null && child.getName().equals("ignorable")) {
 						joinedTarget.addContent(src.getContent());
 					}
-					if (child.getName().equals("segment") && "final".equals(child.getAttributeValue("state"))) {
+					if (isSegment && "final".equals(child.getAttributeValue("state"))) {
 						approved = true;
 					}
+					prevWasSegment = isSegment;
+					prevSourceBreaks = isSegment ? srcBreaks : "";
+					prevTargetBreaks = isSegment ? trailingLineBreaks(tgt) : "";
 				}
 			}
 			if (approved) {
@@ -466,6 +489,72 @@ public class FromXliff2 {
 
 	private static boolean isComment(Element element) {
 		return ("mrk".equals(element.getName()) && "comment".equals(element.getAttributeValue("type")));
+	}
+
+	private static String trailingLineBreaks(Element el) {
+		return lineBreakAffix(lastText(el), false);
+	}
+
+	private static String leadingLineBreaks(Element el) {
+		return lineBreakAffix(firstText(el), true);
+	}
+
+	private static String lineBreakAffix(String text, boolean leading) {
+		if (text == null || text.isEmpty()) {
+			return "";
+		}
+		if (leading) {
+			int i = 0;
+			while (i < text.length() && isLineBreakChar(text.charAt(i))) {
+				i++;
+			}
+			return text.substring(0, i);
+		}
+		int i = text.length();
+		while (i > 0 && isLineBreakChar(text.charAt(i - 1))) {
+			i--;
+		}
+		return text.substring(i);
+	}
+
+	private static boolean isLineBreakChar(char c) {
+		return c == '\n' || c == '\r' || c == '\u2028' || c == '\u2029';
+	}
+
+	private static String firstText(Element el) {
+		if (el == null) {
+			return "";
+		}
+		List<XMLNode> content = el.getContent();
+		if (content == null || content.isEmpty()) {
+			return "";
+		}
+		XMLNode first = content.get(0);
+		if (first.getNodeType() == XMLNode.TEXT_NODE) {
+			return ((TextNode) first).getText();
+		}
+		if (first.getNodeType() == XMLNode.ELEMENT_NODE) {
+			return firstText((Element) first);
+		}
+		return "";
+	}
+
+	private static String lastText(Element el) {
+		if (el == null) {
+			return "";
+		}
+		List<XMLNode> content = el.getContent();
+		if (content == null || content.isEmpty()) {
+			return "";
+		}
+		XMLNode last = content.get(content.size() - 1);
+		if (last.getNodeType() == XMLNode.TEXT_NODE) {
+			return ((TextNode) last).getText();
+		}
+		if (last.getNodeType() == XMLNode.ELEMENT_NODE) {
+			return lastText((Element) last);
+		}
+		return "";
 	}
 
 	private static List<XMLNode> harvestContent(Element joinedSource, Map<String, String> tags,
