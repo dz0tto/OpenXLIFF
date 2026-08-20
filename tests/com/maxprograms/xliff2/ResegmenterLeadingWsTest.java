@@ -50,7 +50,8 @@ public final class ResegmenterLeadingWsTest {
 			testKeepsTagOnlyAfterConvertStylePh(catalogPath, newlinesSrx, srxPath);
 			testExportJoinRestoresNewlineBetweenAdjacentSegments(catalogPath, newlinesSrx);
 		}
-		testExportJoinInsertsNewlineBetweenAdjacentSegments(catalogPath);
+		testExportJoinRestoresNewlineFromSourceTrailingBreak(catalogPath);
+		testExportJoinDoesNotInventNewlineBetweenAdjacentSegments(catalogPath);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -425,11 +426,57 @@ public final class ResegmenterLeadingWsTest {
 	}
 
 	/**
-	 * Convert-back joins adjacent segments (newline SRX, no ignorable) with a line break.
+	 * When the previous source still ends with the newline SRX break, restore that
+	 * same break on the target only — do not double it on the source.
 	 */
-	private static void testExportJoinInsertsNewlineBetweenAdjacentSegments(Path catalogPath) throws Exception {
-		String name = "FromXliff2 inserts newline between adjacent segments";
-		Path dir = Files.createTempDirectory("oxlf-reseg-nl-adj-");
+	private static void testExportJoinRestoresNewlineFromSourceTrailingBreak(Path catalogPath) throws Exception {
+		String name = "FromXliff2 restores target newline from source trailing break";
+		Path dir = Files.createTempDirectory("oxlf-reseg-nl-src-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="ru">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="u1-0">
+					    <source xml:space="preserve">First line\n</source>
+					    <target xml:space="preserve">Первая строка</target>
+					   </segment>
+					   <segment id="u1-1">
+					    <source xml:space="preserve">Second line</source>
+					    <target xml:space="preserve">Вторая строка</target>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Path out12 = dir.resolve("out12.xlf");
+			List<String> from = FromXliff2.run(xliff.toString(), out12.toString(), catalogPath.toString());
+			assertEquals(name + " from2 status", Constants.SUCCESS, from.get(0));
+
+			String xml12 = Files.readString(out12);
+			if (!xml12.contains("Первая строка\nВторая строка")) {
+				fail(name + ": joined target missing restored newline: " + xml12);
+			}
+			if (!xml12.contains("First line\nSecond line")) {
+				fail(name + ": joined source missing original newline: " + xml12);
+			}
+			if (xml12.contains("First line\n\nSecond line")) {
+				fail(name + ": joined source doubled the newline: " + xml12);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Adjacent segments with no linebreak in the source must stay glued.
+	 */
+	private static void testExportJoinDoesNotInventNewlineBetweenAdjacentSegments(Path catalogPath) throws Exception {
+		String name = "FromXliff2 does not invent newline between adjacent segments";
+		Path dir = Files.createTempDirectory("oxlf-reseg-nl-none-");
 		try {
 			Path xliff = dir.resolve("in.xlf");
 			Files.writeString(xliff, """
@@ -455,11 +502,14 @@ public final class ResegmenterLeadingWsTest {
 			assertEquals(name + " from2 status", Constants.SUCCESS, from.get(0));
 
 			String xml12 = Files.readString(out12);
-			if (!xml12.contains("Первая строка\nВторая строка")) {
-				fail(name + ": joined target missing restored newline: " + xml12);
+			if (xml12.contains("Первая строка\nВторая строка")) {
+				fail(name + ": invented newline on target: " + xml12);
 			}
-			if (!xml12.contains("First line\nSecond line")) {
-				fail(name + ": joined source missing restored newline: " + xml12);
+			if (xml12.contains("First line\nSecond line")) {
+				fail(name + ": invented newline on source: " + xml12);
+			}
+			if (!xml12.contains("Первая строкаВторая строка")) {
+				fail(name + ": expected glued target: " + xml12);
 			}
 		} finally {
 			deleteRecursive(dir);
