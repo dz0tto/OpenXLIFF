@@ -291,9 +291,18 @@ public class FromXliff2 {
 
 			List<Element> children = source.getChildren();
 			Iterator<Element> et = children.iterator();
+			boolean prevWasSegment = false;
 			while (et.hasNext()) {
 				Element child = et.next();
 				if (child.getName().equals("segment") || child.getName().equals("ignorable")) {
+					boolean isSegment = child.getName().equals("segment");
+					// Newline SRX leaves no <ignorable> between line-split segments.
+					// Restore the break on convert-back the same way ignorables are joined.
+					if (prevWasSegment && isSegment) {
+						joinedSource.addContent("\n");
+						joinedTarget.addContent("\n");
+						preserve = true;
+					}
 					Element src = child.getChild("source");
 					if (src.getAttributeValue("xml:space", "default").equals("preserve")) {
 						preserve = true;
@@ -307,9 +316,10 @@ public class FromXliff2 {
 					if (tgt == null && child.getName().equals("ignorable")) {
 						joinedTarget.addContent(src.getContent());
 					}
-					if (child.getName().equals("segment") && "final".equals(child.getAttributeValue("state"))) {
+					if (isSegment && "final".equals(child.getAttributeValue("state"))) {
 						approved = true;
 					}
+					prevWasSegment = isSegment;
 				}
 			}
 			if (approved) {
