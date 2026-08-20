@@ -54,6 +54,7 @@ public final class ResegmenterLeadingWsTest {
 			testExportJoinRestoresDoubleNewlineFromIgnorables(catalogPath, newlinesSrx);
 		}
 		testExportJoinRestoresNewlineFromSourceTrailingBreak(catalogPath);
+		testExportJoinRestoresLeftoverBreakPlusIgnorable(catalogPath);
 		testExportJoinDoesNotInventNewlineBetweenAdjacentSegments(catalogPath);
 
 		if (failures > 0) {
@@ -606,6 +607,55 @@ public final class ResegmenterLeadingWsTest {
 			}
 			if (xml12.contains("First line\n\nSecond line")) {
 				fail(name + ": joined source doubled the newline: " + xml12);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Leftover trailing break on segment N plus a following newline ignorable
+	 * (Excel {@code _x000D_} restored after SRX) must both reach the target.
+	 */
+	private static void testExportJoinRestoresLeftoverBreakPlusIgnorable(Path catalogPath) throws Exception {
+		String name = "FromXliff2 restores leftover source break plus ignorable";
+		Path dir = Files.createTempDirectory("oxlf-reseg-nl-leftover-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="ru">
+					 <file id="f1" original="t.xlsx" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="u1-0">
+					    <source xml:space="preserve">First line\n</source>
+					    <target xml:space="preserve">Первая строка</target>
+					   </segment>
+					   <ignorable id="u1-i0">
+					    <source xml:space="preserve">\n</source>
+					   </ignorable>
+					   <segment id="u1-1">
+					    <source xml:space="preserve">Second line</source>
+					    <target xml:space="preserve">Вторая строка</target>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Path out12 = dir.resolve("out12.xlf");
+			List<String> from = FromXliff2.run(xliff.toString(), out12.toString(), catalogPath.toString());
+			assertEquals(name + " from2 status", Constants.SUCCESS, from.get(0));
+
+			String xml12 = Files.readString(out12);
+			if (!xml12.contains("Первая строка\n\nВторая строка")) {
+				fail(name + ": joined target missing both newlines: " + xml12);
+			}
+			if (!xml12.contains("First line\n\nSecond line")) {
+				fail(name + ": joined source missing both newlines: " + xml12);
+			}
+			if (xml12.contains("First line\n\n\nSecond line")) {
+				fail(name + ": joined source invented an extra newline: " + xml12);
 			}
 		} finally {
 			deleteRecursive(dir);
