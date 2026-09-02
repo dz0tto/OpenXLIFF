@@ -326,8 +326,8 @@ public final class MqxliffConvertRoundTripTest {
 					""");
 			Path x21 = convertToXliff21(src, dir, catalog, true, true);
 			String xml = Files.readString(x21);
-			assertEquals(name + " sc count", 2, countOccurrences(xml, "<sc"));
-			assertEquals(name + " ec count", 2, countOccurrences(xml, "<ec"));
+			assertEquals(name + " sc count (source+target)", 4, countOccurrences(xml, "<sc"));
+			assertEquals(name + " ec count (source+target)", 4, countOccurrences(xml, "<ec"));
 			assertContains(name, xml, "startRef=\"1\"");
 			assertContains(name, xml, "startRef=\"2\"");
 			assertContains(name, xml, "val=\"[1]\"");
