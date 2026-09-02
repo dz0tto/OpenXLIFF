@@ -30,6 +30,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import org.xml.sax.SAXException;
 
 import com.maxprograms.converters.Constants;
+import com.maxprograms.converters.xliff.ToOpenXliff;
 import com.maxprograms.xml.Attribute;
 import com.maxprograms.xml.CatalogBuilder;
 import com.maxprograms.xml.Document;
@@ -735,23 +736,59 @@ public class FromXliff2 {
 			result = mrk;
 		}
 		if ("sc".equals(tag.getName())) {
-			result = new Element("bpt");
-			String id = tag.getAttributeValue("id");
 			String dataRef = tag.getAttributeValue("dataRef");
+			String id = tag.getAttributeValue("id");
+			String attrKey = !dataRef.isEmpty() ? dataRef : id;
+			result = new Element(originalInlineName(attributes, attrKey, "bpt"));
 			result.setAttribute("id", id);
+			result.setAttribute("rid", id);
+			applyStoredAttributes(result, attributes, attrKey);
 			if (tags.containsKey(dataRef)) {
 				result.addContent(tags.get(dataRef));
 			}
 		}
 		if ("ec".equals(tag.getName())) {
-			result = new Element("ept");
-			String id = tag.getAttributeValue("id");
 			String dataRef = tag.getAttributeValue("dataRef");
+			String id = tag.getAttributeValue("id");
+			String startRef = tag.getAttributeValue("startRef");
+			String attrKey = !dataRef.isEmpty() ? dataRef : id;
+			result = new Element(originalInlineName(attributes, attrKey, "ept"));
 			result.setAttribute("id", id);
+			if (!startRef.isEmpty()) {
+				result.setAttribute("rid", startRef);
+			}
+			applyStoredAttributes(result, attributes, attrKey);
 			if (tags.containsKey(dataRef)) {
 				result.addContent(tags.get(dataRef));
 			}
 		}
 		return result;
+	}
+
+	private static String originalInlineName(Map<String, List<String[]>> attributes, String attrKey, String fallback) {
+		if (attributes != null && attrKey != null && attributes.containsKey(attrKey)) {
+			List<String[]> list = attributes.get(attrKey);
+			for (int i = 0; i < list.size(); i++) {
+				String[] pair = list.get(i);
+				if ("oxlf-original".equals(pair[0]) && ToOpenXliff.isPairingName(pair[1])) {
+					return pair[1];
+				}
+			}
+		}
+		return fallback;
+	}
+
+	private static void applyStoredAttributes(Element result, Map<String, List<String[]>> attributes, String attrKey) {
+		if (attributes == null || attrKey == null || !attributes.containsKey(attrKey)) {
+			return;
+		}
+		List<String[]> list = attributes.get(attrKey);
+		for (int i = 0; i < list.size(); i++) {
+			String[] pair = list.get(i);
+			if ("oxlf-original".equals(pair[0]) || "equiv-text".equals(pair[0]) || "equiv".equals(pair[0])) {
+				continue;
+			}
+			result.setAttribute(pair[0], pair[1]);
+		}
 	}
 }

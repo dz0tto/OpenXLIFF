@@ -271,20 +271,37 @@ public class FromOpenXliff {
         }
         String trimmed = text.trim();
         boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
-        if (mqPayload) {
-            sb.append("<ph");
-            String id = e.getAttributeValue("id", "");
-            if (!id.isEmpty()) {
-                sb.append(" id=\"");
-                sb.append(XMLUtils.cleanText(id).replace("\"", "&quot;"));
-                sb.append('"');
+        String name = e.getName();
+        boolean pairing = ToOpenXliff.isPairingName(name);
+        if (mqPayload || pairing) {
+            if (!pairing) {
+                name = "ph";
             }
+            sb.append('<');
+            sb.append(name);
+            appendAttr(sb, "id", e.getAttributeValue("id", ""));
+            appendAttr(sb, "rid", e.getAttributeValue("rid", ""));
             sb.append('>');
-            sb.append(XMLUtils.cleanText(text));
-            sb.append("</ph>");
+            if (mqPayload || !text.isEmpty()) {
+                sb.append(XMLUtils.cleanText(text));
+            }
+            sb.append("</");
+            sb.append(name);
+            sb.append('>');
             return;
         }
         sb.append(text);
+    }
+
+    private static void appendAttr(StringBuilder sb, String name, String value) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        sb.append(' ');
+        sb.append(name);
+        sb.append("=\"");
+        sb.append(XMLUtils.cleanText(value).replace("\"", "&quot;"));
+        sb.append('"');
     }
 
     private static Element processMrk(Element e) {

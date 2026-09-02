@@ -56,6 +56,7 @@ public final class ResegmenterLeadingWsTest {
 		testExportJoinRestoresNewlineFromSourceTrailingBreak(catalogPath);
 		testExportJoinRestoresLeftoverBreakPlusIgnorable(catalogPath);
 		testExportJoinDoesNotInventNewlineBetweenAdjacentSegments(catalogPath);
+		testKeepsScEcPairOnSameSegment(catalogPath, srxPath);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -701,6 +702,44 @@ public final class ResegmenterLeadingWsTest {
 			}
 			if (!xml12.contains("Первая строкаВторая строка")) {
 				fail(name + ": expected glued target: " + xml12);
+			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** SRX would split after "World." between sc and matching ec — keep the pair together. */
+	private static void testKeepsScEcPairOnSameSegment(Path catalogPath, Path srxPath) throws Exception {
+		String name = "does not split sc from matching ec";
+		Path dir = Files.createTempDirectory("oxlf-reseg-scec-");
+		try {
+			Path xliff = dir.resolve("in.xlf");
+			Files.writeString(xliff, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" version="2.0" srcLang="en" trgLang="de">
+					 <file id="f1" original="t.txt" canResegment="yes">
+					  <unit id="u1" canResegment="yes" translate="yes">
+					   <segment id="s1">
+					    <source xml:space="default">Hello <sc id="1"/>World. More <ec id="1e" startRef="1"/> text.</source>
+					   </segment>
+					  </unit>
+					 </file>
+					</xliff>
+					""", StandardCharsets.UTF_8);
+
+			Catalog catalog = CatalogBuilder.getCatalog(catalogPath.toString());
+			List<String> res = Resegmenter.run(xliff.toString(), srxPath.toString(), "en", catalog);
+			assertEquals(name + " status", Constants.SUCCESS, res.get(0));
+
+			String xml = Files.readString(xliff);
+			assertContains(name, xml, "<sc id=\"1\"");
+			assertContains(name, xml, "startRef=\"1\"");
+			int scPos = xml.indexOf("<sc id=\"1\"");
+			int ecPos = xml.indexOf("<ec ");
+			int scSeg = xml.lastIndexOf("<segment", scPos);
+			int ecSeg = xml.lastIndexOf("<segment", ecPos);
+			if (scPos < 0 || ecPos < 0 || scSeg != ecSeg) {
+				fail(name + ": sc/ec split across segments: " + xml);
 			}
 		} finally {
 			deleteRecursive(dir);

@@ -18,8 +18,10 @@ import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 import javax.xml.parsers.ParserConfigurationException;
 
@@ -133,6 +135,7 @@ public class Resegmenter {
 
             String originalId = el.getAttributeValue("id");
             Element segSource = segmenter.segment(source);
+            keepPairedInlineTogether(segSource);
             int newSegments = segSource.getChildren("mrk").size();
             int emittedBefore = rebuilt.size();
 
@@ -208,6 +211,85 @@ public class Resegmenter {
 
         if (changed) {
             unit.setContent(rebuilt);
+        }
+    }
+
+    /**
+     * SRX may split after a sentence that sits between {@code sc} and its matching
+     * {@code ec}. Merge those {@code mrk} pieces so a pair is never split across
+     * segments. Isolated {@code sc}/{@code ec} (no mate in this unit) are left as-is.
+     */
+    private static void keepPairedInlineTogether(Element segSource) {
+        if (segSource == null) {
+            return;
+        }
+        List<Element> mrks = segSource.getChildren("mrk");
+        if (mrks.size() <= 1) {
+            return;
+        }
+        Map<String, Integer> scIndex = new HashMap<>();
+        Map<String, Integer> ecIndex = new HashMap<>();
+        for (int i = 0; i < mrks.size(); i++) {
+            collectPairEnds(mrks.get(i), i, scIndex, ecIndex);
+        }
+        boolean[] mergeNext = new boolean[mrks.size()];
+        boolean any = false;
+        for (Map.Entry<String, Integer> sc : scIndex.entrySet()) {
+            Integer ecAt = ecIndex.get(sc.getKey());
+            if (ecAt == null) {
+                continue;
+            }
+            int from = Math.min(sc.getValue(), ecAt);
+            int to = Math.max(sc.getValue(), ecAt);
+            for (int i = from; i < to; i++) {
+                mergeNext[i] = true;
+                any = true;
+            }
+        }
+        if (!any) {
+            return;
+        }
+        List<XMLNode> rebuilt = new ArrayList<>();
+        int i = 0;
+        while (i < mrks.size()) {
+            Element acc = mrks.get(i);
+            while (i < mrks.size() - 1 && mergeNext[i]) {
+                i++;
+                acc.addContent(mrks.get(i).getContent());
+            }
+            rebuilt.add(acc);
+            i++;
+        }
+        for (int m = 0; m < rebuilt.size(); m++) {
+            Element mrk = (Element) rebuilt.get(m);
+            mrk.setAttribute("mid", String.valueOf(m + 1));
+        }
+        segSource.setContent(rebuilt);
+    }
+
+    private static void collectPairEnds(Element e, int index, Map<String, Integer> scIndex,
+            Map<String, Integer> ecIndex) {
+        if (e == null) {
+            return;
+        }
+        if ("sc".equals(e.getName())) {
+            String id = e.getAttributeValue("id");
+            if (!id.isEmpty() && !scIndex.containsKey(id)) {
+                scIndex.put(id, index);
+            }
+        } else if ("ec".equals(e.getName())) {
+            String startRef = e.getAttributeValue("startRef");
+            if (startRef.isEmpty()) {
+                startRef = e.getAttributeValue("id");
+            }
+            if (!startRef.isEmpty() && !ecIndex.containsKey(startRef)) {
+                ecIndex.put(startRef, index);
+            }
+        }
+        List<Element> children = e.getChildren();
+        Iterator<Element> it = children.iterator();
+        while (it.hasNext()) {
+            collectPairEnds(it.next(), index, scIndex, ecIndex);
         }
     }
 
