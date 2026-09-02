@@ -260,7 +260,7 @@ public class FromOpenXliff {
     }
 
     /**
-     * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:rxt} payloads stay inside
+     * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:*} payloads stay inside
      * {@code <ph>} (escaped text) — expanding them as real {@code <mq:rxt>} elements breaks
      * LevshaXLIFF merge and requires Swordfish post-processing.
      */
@@ -270,7 +270,7 @@ public class FromOpenXliff {
             text = "";
         }
         String trimmed = text.trim();
-        boolean mqPayload = trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req");
+        boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
         if (mqPayload) {
             sb.append("<ph");
             String id = e.getAttributeValue("id", "");

@@ -41,6 +41,8 @@ public final class MqxliffConvertRoundTripTest {
 		testPreservesMismatchedTagIdsAndNestedEntities(catalog);
 		testKeepsLockedAndTagOnlyUnits(catalog);
 		testMergeRestoresPhPayloadsWithoutUnboundMq(catalog);
+		testMqChKeepsMemoQId(catalog);
+		testSameIdBptEptBothPayloadsSurvive(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
 		testApprovedWithoutTargetStaysInitial(catalog);
@@ -156,6 +158,91 @@ public final class MqxliffConvertRoundTripTest {
 			// Must not expand payload into a real namespaced child of target
 			assertFalse(name + " bare mq:rxt element in target",
 					out.matches("(?s).*<target[^>]*>\\s*<mq:rxt[\\s\\S]*</target>.*"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 1: mq:ch inside ph keeps the memoQ id and opaque payload (no phN / double-wrap). */
+	private static void testMqChKeepsMemoQId(Path catalog) throws Exception {
+		String name = "mq:ch keeps memoQ id + opaque payload";
+		Path dir = Files.createTempDirectory("oxlf-mq-ch-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>Hello <ph id="1">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</ph> x <ph id="9">&lt;mq:ch val=" "/&gt;</ph> y <ph id="2">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ph></source>
+					    <target>Hallo <ph id="1">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</ph> x <ph id="9">&lt;mq:ch val=" "/&gt;</ph> y <ph id="2">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ph></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "id=\"1\"");
+			assertContains(name, xml, "id=\"9\"");
+			assertContains(name, xml, "id=\"2\"");
+			assertFalse(name + ": mq:ch must not be renumbered to ph1", xml.contains("id=\"ph1\""));
+			assertFalse(name + ": mq:ch must not use dataRef=ph1", xml.contains("dataRef=\"ph1\""));
+			String data9 = dataContent(xml, "9");
+			if (data9 == null) {
+				fail(name + ": missing <data id=\"9\">");
+			} else {
+				assertContains(name + " data 9", data9, "mq:ch");
+				assertFalse(name + ": data 9 must not wrap mq:ch in <ph id=\"9\">",
+						data9.contains("&lt;ph") || data9.contains("<ph"));
+			}
+			// equiv on the ch tag is a space (from val) or the val itself
+			boolean equivOk = xml.contains("equiv=\" \"") || xml.contains("equiv=\"&quot; \"")
+					|| (data9 != null && data9.contains("val=\" \""));
+			if (!equivOk) {
+				fail(name + ": expected equiv/val space on mq:ch, xml=" + xml);
+			}
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 1: same-id bpt/ept with different mq:rxt payloads both survive in originalData. */
+	private static void testSameIdBptEptBothPayloadsSurvive(Path catalog) throws Exception {
+		String name = "same-id bpt/ept both mq:rxt payloads survive";
+		Path dir = Files.createTempDirectory("oxlf-mq-bptept-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bpt id="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></source>
+					    <target>A <bpt id="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "val=\"[B]\"");
+			assertContains(name, xml, "val=\"[/B]\"");
+			assertContains(name, xml, "id=\"4\"");
+			assertContains(name, xml, "id=\"4e\"");
+			String data4 = dataContent(xml, "4");
+			String data4e = dataContent(xml, "4e");
+			if (data4 == null || data4e == null) {
+				fail(name + ": expected data id=4 and id=4e, xml=" + xml);
+			} else {
+				assertContains(name + " data 4", data4, "[B]");
+				assertContains(name + " data 4e", data4e, "[/B]");
+			}
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -377,6 +464,12 @@ public final class MqxliffConvertRoundTripTest {
 			throw new IOException("ToXliff2 failed: " + res);
 		}
 		return xliff21;
+	}
+
+	private static String dataContent(String xliff21, String id) {
+		Matcher m = Pattern.compile("<data\\s+id=\"" + Pattern.quote(id) + "\"[^>]*>(.*?)</data>", Pattern.DOTALL)
+				.matcher(xliff21);
+		return m.find() ? m.group(1) : null;
 	}
 
 	private static int countUnits(String xliff21) {

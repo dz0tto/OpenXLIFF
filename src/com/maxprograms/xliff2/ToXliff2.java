@@ -21,14 +21,17 @@ import java.nio.charset.StandardCharsets;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.xml.sax.SAXException;
 
 import com.maxprograms.converters.Constants;
+import com.maxprograms.converters.xliff.ToOpenXliff;
 import com.maxprograms.xml.Attribute;
 import com.maxprograms.xml.CatalogBuilder;
 import com.maxprograms.xml.Document;
@@ -59,19 +62,18 @@ public class ToXliff2 {
 	}
 
 	private static boolean isLevshaStylePh(Element ph) {
-		// Levsha <x equiv-text> / ToOpenXliff markers, or native MemoQ mq:rxt ph text.
+		// Levsha <x equiv-text> / ToOpenXliff markers, or any MemoQ mq:* payload.
 		if (ph.hasAttribute("equiv-text") || ph.hasAttribute("equiv") || ph.hasAttribute("ctype")) {
 			return true;
 		}
 		String text = ph.getText();
+		if (ToOpenXliff.isMemoQPayload(text)) {
+			return true;
+		}
 		if (text == null) {
 			return false;
 		}
 		String trimmed = text.trim();
-		if (trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req") || trimmed.startsWith("&lt;mq:rxt")
-				|| trimmed.startsWith("&lt;mq:rxt-req")) {
-			return true;
-		}
 		return trimmed.startsWith("<x") && (trimmed.contains("equiv-text") || trimmed.contains("ctype"));
 	}
 
@@ -541,17 +543,31 @@ public class ToXliff2 {
 		if ("ph".equals(tag.getName())) {
 			boolean levshaStyle = isLevshaStylePh(tag);
 			String dataId = levshaStyle ? tag.getAttributeValue("id") : "ph" + tag.getAttributeValue("id");
-			if (!containsTag(originalData, dataId)) {
-				Element data = new Element("data");
-				data.setAttribute("id", dataId);
-				if (levshaStyle) {
-					data.setText(tag.getText());
-				} else {
-					data.setContent(tag.getContent());
+			String newPayload = tag.getText() != null ? tag.getText() : "";
+			Element existing = findData(originalData, dataId);
+			if (existing != null) {
+				String oldPayload = existing.getText() != null ? existing.getText() : "";
+				if (oldPayload.equals(newPayload)) {
+					return;
 				}
-				originalData.addContent(data);
-				storeAttributes(tagAttributes, tag, dataId);
+				Set<String> used = collectDataIds(originalData);
+				String unique = ToOpenXliff.uniqueInlineId(dataId, used);
+				if (levshaStyle) {
+					tag.setAttribute("id", unique);
+				} else if (unique.startsWith("ph") && dataId.startsWith("ph")) {
+					tag.setAttribute("id", unique.substring(2));
+				}
+				dataId = unique;
 			}
+			Element data = new Element("data");
+			data.setAttribute("id", dataId);
+			if (levshaStyle) {
+				data.setText(tag.getText());
+			} else {
+				data.setContent(tag.getContent());
+			}
+			originalData.addContent(data);
+			storeAttributes(tagAttributes, tag, dataId);
 			return;
 		}
 		if ("bpt".equals(tag.getName())) {
@@ -607,15 +623,29 @@ public class ToXliff2 {
 	}
 
 	private static boolean containsTag(Element originalData, String id) {
+		return findData(originalData, id) != null;
+	}
+
+	private static Element findData(Element originalData, String id) {
 		List<Element> tags = originalData.getChildren("data");
 		Iterator<Element> it = tags.iterator();
 		while (it.hasNext()) {
 			Element tag = it.next();
 			if (tag.getAttributeValue("id").equals(id)) {
-				return true;
+				return tag;
 			}
 		}
-		return false;
+		return null;
+	}
+
+	private static Set<String> collectDataIds(Element originalData) {
+		Set<String> used = new HashSet<>();
+		List<Element> tags = originalData.getChildren("data");
+		Iterator<Element> it = tags.iterator();
+		while (it.hasNext()) {
+			used.add(it.next().getAttributeValue("id"));
+		}
+		return used;
 	}
 
 	private static void storeAttributes(Element tagAttributes, Element tag, String id) {
