@@ -570,7 +570,10 @@ public class FromXliff2 {
 				result.add(node);
 			}
 			if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
-				result.add(processIniline((Element) node, tags, attributes));
+				Element converted = processIniline((Element) node, tags, attributes);
+				if (converted != null) {
+					result.add(converted);
+				}
 			}
 		}
 		return result;
@@ -762,7 +765,22 @@ public class FromXliff2 {
 				result.addContent(tags.get(dataRef));
 			}
 		}
+		if (result == null && ToOpenXliff.isPairingName(tag.getName())) {
+			// 1.2 bpt/ept that leaked into the 2.0 unit: keep the marker, do not drop it.
+			result = copyElementPreserve(tag);
+		}
 		return result;
+	}
+
+	private static Element copyElementPreserve(Element tag) {
+		Element copy = new Element(tag.getName());
+		List<Attribute> atts = tag.getAttributes();
+		for (int i = 0; i < atts.size(); i++) {
+			Attribute a = atts.get(i);
+			copy.setAttribute(a.getName(), a.getValue());
+		}
+		copy.setContent(tag.getContent());
+		return copy;
 	}
 
 	private static String originalInlineName(Map<String, List<String[]>> attributes, String attrKey, String fallback) {

@@ -263,6 +263,10 @@ public class FromOpenXliff {
      * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:*} payloads stay inside
      * {@code <ph>} (escaped text) — expanding them as real {@code <mq:rxt>} elements breaks
      * LevshaXLIFF merge and requires Swordfish post-processing.
+     * <p>
+     * Never unwrap an inline marker to its inner text. A MemoQ {@code bpt}/{@code ph} whose
+     * payload is {@code {}} (not {@code <mq:…>}) used to become literal {@code {}} in the
+     * created target.
      */
     private static void appendRestoredInline(StringBuilder sb, Element e) {
         String text = e.getText();
@@ -273,24 +277,23 @@ public class FromOpenXliff {
         boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
         String name = e.getName();
         boolean pairing = ToOpenXliff.isPairingName(name);
-        if (mqPayload || pairing) {
-            if (!pairing) {
-                name = "ph";
-            }
-            sb.append('<');
-            sb.append(name);
-            appendAttr(sb, "id", e.getAttributeValue("id", ""));
-            appendAttr(sb, "rid", e.getAttributeValue("rid", ""));
-            sb.append('>');
-            if (mqPayload || !text.isEmpty()) {
-                sb.append(XMLUtils.cleanText(text));
-            }
-            sb.append("</");
-            sb.append(name);
-            sb.append('>');
-            return;
+        if (mqPayload && !pairing) {
+            name = "ph";
         }
-        sb.append(text);
+        sb.append('<');
+        sb.append(name);
+        List<Attribute> atts = e.getAttributes();
+        for (int i = 0; i < atts.size(); i++) {
+            Attribute a = atts.get(i);
+            appendAttr(sb, a.getName(), a.getValue());
+        }
+        sb.append('>');
+        if (!text.isEmpty()) {
+            sb.append(XMLUtils.cleanText(text));
+        }
+        sb.append("</");
+        sb.append(name);
+        sb.append('>');
     }
 
     private static void appendAttr(StringBuilder sb, String name, String value) {
@@ -333,8 +336,7 @@ public class FromOpenXliff {
                     Element processed = processMrk(child);
                     newContent.add(processed);
                 } else {
-                    String text = child.getText();
-                    newContent.add(new TextNode(text));
+                    newContent.add(child);
                 }
             }
         }

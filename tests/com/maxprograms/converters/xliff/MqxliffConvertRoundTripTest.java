@@ -48,6 +48,10 @@ public final class MqxliffConvertRoundTripTest {
 		testPairedInlineBxEx(catalog);
 		testPairedInlineFlagOffStillFlattensToPh(catalog);
 		testPairedInlineUnpairedStaysPh(catalog);
+		testCtypeBoldSameIdPairEmitsScEc(catalog);
+		testToXliff2PairsCtypeBptWithPlainEpt(catalog);
+		testMergeKeepsCtypeBoldPairOnTarget(catalog);
+		testMergeKeepsNonMqPhPayloadOnTarget(catalog);
 		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
@@ -433,6 +437,152 @@ public final class MqxliffConvertRoundTripTest {
 			assertFalse(name + ": unpaired bpt must not become ec", xml.contains("<ec"));
 			assertContains(name, xml, "<ph");
 			assertContains(name, xml, "val=\"[B]\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** MemoQ bold pair: bpt has ctype, ept shares id and has only {} payload. */
+	private static void testCtypeBoldSameIdPairEmitsScEc(Path catalog) throws Exception {
+		String name = "ctype=bold same-id bpt/ept pair emits sc/ec";
+		Path dir = Files.createTempDirectory("oxlf-mq-ctype-bold-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			assertContains(name, xml, "startRef=");
+			assertFalse(name + ": closer must not stay a flattened ph",
+					xml.contains("<ph") && !xml.contains("<ec"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** ToXliff2 on a 1.2 intermediate that still has raw same-id bpt/ept (no rid on ept). */
+	private static void testToXliff2PairsCtypeBptWithPlainEpt(Path catalog) throws Exception {
+		String name = "ToXliff2 pairs ctype bpt with same-id ept";
+		Path dir = Files.createTempDirectory("oxlf-mq-toxliff2-ctype-");
+		try {
+			Path xliff12 = dir.resolve("open.xlf");
+			write(xliff12, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" xml:space="preserve">
+					    <source><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path xliff21 = dir.resolve("out.xlf");
+			List<String> res = ToXliff2.run(xliff12.toString(), xliff21.toString(), catalog.toString(), "2.1");
+			if (!Constants.SUCCESS.equals(res.get(0))) {
+				fail(name + ": ToXliff2 failed " + res);
+				return;
+			}
+			String xml = Files.readString(xliff21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			assertContains(name, xml, "startRef=");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Creating the target mqxliff must keep the bold pair, not unwrap it to {}text{}. */
+	private static void testMergeKeepsCtypeBoldPairOnTarget(Path catalog) throws Exception {
+		String name = "Merge keeps ctype=bold bpt/ept on target";
+		Path dir = Files.createTempDirectory("oxlf-mq-merge-ctype-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target xml:space="preserve" state="translated"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertContains(name, out, "<bpt");
+			assertContains(name, out, "<ept");
+			assertFalse(name + ": target unwrapped to {}text{}",
+					out.contains("{}Steam Title (80 symbols max):{}"));
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			if (targetAt < 0 || targetEnd < 0) {
+				fail(name + ": no target in " + out);
+				return;
+			}
+			String target = out.substring(targetAt, targetEnd);
+			assertContains(name + " target bpt", target, "<bpt");
+			assertContains(name + " target ept", target, "<ept");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Flattened non-mq ph payload ({}) must stay a ph on merge, not become literal {}. */
+	private static void testMergeKeepsNonMqPhPayloadOnTarget(Path catalog) throws Exception {
+		String name = "Merge keeps non-mq {} ph payload on target";
+		Path dir = Files.createTempDirectory("oxlf-mq-merge-ph-brace-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve"><ph id="1">{}</ph>Steam Title (80 symbols max):<ph id="2">{}</ph></source>
+					    <target xml:space="preserve" state="translated"><ph id="1">{}</ph>Steam Title (80 symbols max):<ph id="2">{}</ph></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, false);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertFalse(name + ": target unwrapped to {}text{}",
+					out.contains("{}Steam Title (80 symbols max):{}"));
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " target ph", target, "<ph");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
