@@ -50,6 +50,8 @@ public final class MqxliffConvertRoundTripTest {
 		testPairedInlineUnpairedStaysPh(catalog);
 		testCtypeBoldSameIdPairEmitsScEc(catalog);
 		testToXliff2PairsCtypeBptWithPlainEpt(catalog);
+		testMergeKeepsCtypeBoldPairOnTarget(catalog);
+		testMergeKeepsNonMqPhPayloadOnTarget(catalog);
 		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
@@ -502,6 +504,85 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name, xml, "<sc");
 			assertContains(name, xml, "<ec");
 			assertContains(name, xml, "startRef=");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Creating the target mqxliff must keep the bold pair, not unwrap it to {}text{}. */
+	private static void testMergeKeepsCtypeBoldPairOnTarget(Path catalog) throws Exception {
+		String name = "Merge keeps ctype=bold bpt/ept on target";
+		Path dir = Files.createTempDirectory("oxlf-mq-merge-ctype-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target xml:space="preserve" state="translated"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertContains(name, out, "<bpt");
+			assertContains(name, out, "<ept");
+			assertFalse(name + ": target unwrapped to {}text{}",
+					out.contains("{}Steam Title (80 symbols max):{}"));
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			if (targetAt < 0 || targetEnd < 0) {
+				fail(name + ": no target in " + out);
+				return;
+			}
+			String target = out.substring(targetAt, targetEnd);
+			assertContains(name + " target bpt", target, "<bpt");
+			assertContains(name + " target ept", target, "<ept");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Flattened non-mq ph payload ({}) must stay a ph on merge, not become literal {}. */
+	private static void testMergeKeepsNonMqPhPayloadOnTarget(Path catalog) throws Exception {
+		String name = "Merge keeps non-mq {} ph payload on target";
+		Path dir = Files.createTempDirectory("oxlf-mq-merge-ph-brace-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve"><ph id="1">{}</ph>Steam Title (80 symbols max):<ph id="2">{}</ph></source>
+					    <target xml:space="preserve" state="translated"><ph id="1">{}</ph>Steam Title (80 symbols max):<ph id="2">{}</ph></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, false);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertFalse(name + ": target unwrapped to {}text{}",
+					out.contains("{}Steam Title (80 symbols max):{}"));
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " target ph", target, "<ph");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
