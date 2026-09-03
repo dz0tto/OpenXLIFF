@@ -12,8 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,6 +62,7 @@ public final class MqxliffConvertRoundTripTest {
 		testTsLockedPropagatesToSubState(catalog);
 		testNestedTripleWrongEptRidGetsDistinctStartRefs(catalog);
 		testNestedTripleWrongEptRid2GetsStartRef1(catalog);
+		testMemoqFormattingIdCollidesWithDocumentRid(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -629,6 +632,7 @@ public final class MqxliffConvertRoundTripTest {
 					countOccurrences(source, "startRef=\"1\""));
 			assertContains(name, source, "id=\"1e\"");
 			assertContains(name, source, "startRef=\"1\"");
+			assertNoDuplicateStartRefs(name + " source", source);
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -674,6 +678,52 @@ public final class MqxliffConvertRoundTripTest {
 			String oneETag = tagStart >= 0 && tagEnd > tagStart ? source.substring(tagStart, tagEnd) : "";
 			assertContains(name + " 1e startRef", oneETag, "startRef=\"1\"");
 			assertFalse(name + " 1e must not use startRef=2", oneETag.contains("startRef=\"2\""));
+			assertNoDuplicateStartRefs(name + " source", source);
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Real MemoQ 12.2 unit: formatting {@code {}} pair has no rid and id="1",
+	 * while hlnk uses rid="1". Must emit startRef 3, 2, 1 — not two /2.
+	 */
+	private static void testMemoqFormattingIdCollidesWithDocumentRid(Path catalog) throws Exception {
+		String name = "MemoQ formatting id=1 vs document rid=1";
+		Path dir = Files.createTempDirectory("oxlf-mq-fmt-id-rid-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en-us" target-language="ru" datatype="x-docx" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve"><bpt id="1" ctype="underlined">{}</bpt><bpt id="2" rid="1">&lt;hlnk id="rId7" fileName="document.xml"&gt;</bpt><bpt id="3" rid="2">&lt;rpr id="2"&gt;</bpt>https://store.steampowered.com/app/1184370/Pathfinder_Wrath_of_the_Righteous__Enhanced_Edition/<ept id="4" rid="2">&lt;/rpr id="2" transform="close"&gt;</ept><ept id="5" rid="1">&lt;/hlnk&gt;</ept><ept id="1">{}</ept></source>
+					    <target xml:space="preserve"><bpt id="1" ctype="underlined">{}</bpt><bpt id="2" rid="3">&lt;hlnk id="rId7" fileName="document.xml"&gt;</bpt><bpt id="3" rid="4">&lt;rpr id="2"&gt;</bpt>https://store.steampowered.com/app/1184370/Pathfinder_Wrath_of_the_Righteous__Enhanced_Edition/<ept id="4" rid="4">&lt;/rpr id="2" transform="close"&gt;</ept><ept id="5" rid="3">&lt;/hlnk&gt;</ept><ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertNoDuplicateStartRefs(name, xml);
+			int sourceAt = xml.indexOf("<source>");
+			int sourceEnd = xml.indexOf("</source>", sourceAt);
+			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : "";
+			int targetAt = xml.indexOf("<target>");
+			int targetEnd = xml.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? xml.substring(targetAt, targetEnd) : "";
+			assertEquals(name + " source startRefs", "3,2,1", startRefsInOrder(source));
+			assertEquals(name + " target startRefs", "3,2,1", startRefsInOrder(target));
+			int oneE = source.indexOf("id=\"1e\"");
+			assertFalse(name + " missing id=1e", oneE < 0);
+			int tagStart = source.lastIndexOf("<ec", oneE);
+			int tagEnd = source.indexOf("/>", oneE);
+			String oneETag = tagStart >= 0 && tagEnd > tagStart ? source.substring(tagStart, tagEnd) : "";
+			assertContains(name + " 1e startRef", oneETag, "startRef=\"1\"");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -889,6 +939,39 @@ public final class MqxliffConvertRoundTripTest {
 			throw new IOException("ToOpenXliff failed: " + res);
 		}
 		return xliff12;
+	}
+
+	private static String startRefsInOrder(String xml) {
+		if (xml == null) {
+			return "";
+		}
+		StringBuilder sb = new StringBuilder();
+		Matcher m = Pattern.compile("startRef=\"([^\"]+)\"").matcher(xml);
+		while (m.find()) {
+			if (sb.length() > 0) {
+				sb.append(',');
+			}
+			sb.append(m.group(1));
+		}
+		return sb.toString();
+	}
+
+	private static void assertNoDuplicateStartRefs(String test, String xml) {
+		if (xml == null) {
+			return;
+		}
+		Matcher seg = Pattern.compile("<(source|target)[^>]*>(.*?)</\\1>").matcher(xml);
+		while (seg.find()) {
+			String body = seg.group(2);
+			Set<String> seen = new HashSet<>();
+			Matcher m = Pattern.compile("startRef=\"([^\"]+)\"").matcher(body);
+			while (m.find()) {
+				String ref = m.group(1);
+				if (!seen.add(ref)) {
+					fail(test + ": duplicate startRef=" + ref + " in " + seg.group(1));
+				}
+			}
+		}
 	}
 
 	private static int countOccurrences(String haystack, String needle) {

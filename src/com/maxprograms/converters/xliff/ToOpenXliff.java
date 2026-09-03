@@ -130,53 +130,47 @@ public class ToOpenXliff {
         return pairingFamily(name) + ":" + pair;
     }
 
-    /** Pairing key: {@code rid} if present, else {@code id}. Prefixed by family so bpt/ept and bx/ex do not collide. */
+    /**
+     * Pairing key namespaced by MemoQ's two id spaces: document tags use {@code rid},
+     * formatting pairs ({@code {}}) use {@code id} and often omit {@code rid}.
+     * {@code rid:1} and {@code id:1} must not collide.
+     */
     private static String pairingKey(Element e) {
         if (e == null || !isPairingName(e.getName())) {
             return null;
         }
         String rid = e.getAttributeValue("rid", "");
+        if (!rid.isEmpty()) {
+            return pairingKeyForPair(e.getName(), "rid:" + rid);
+        }
         String id = normalizeInlineId(e.getAttributeValue("id"));
-        String pair = !rid.isEmpty() ? rid : (id != null ? id : "");
-        return pairingKeyForPair(e.getName(), pair);
+        if (id == null || id.isEmpty()) {
+            return null;
+        }
+        return pairingKeyForPair(e.getName(), "id:" + id);
     }
 
     private static final class OpenedPair {
         final String uniqueId;
         final String origId;
-        final String pairId;
+        final String ridKey;
 
-        OpenedPair(String uniqueId, String origId, String pairId) {
+        OpenedPair(String uniqueId, String origId, String ridKey) {
             this.uniqueId = uniqueId;
             this.origId = origId != null ? origId : "";
-            this.pairId = pairId != null ? pairId : "";
+            this.ridKey = ridKey != null && !ridKey.isEmpty() ? ridKey : null;
         }
 
-        boolean matchesId(String id) {
-            if (id == null || id.isEmpty()) {
-                return false;
-            }
-            if (id.equals(uniqueId) || id.equals(origId) || id.equals(pairId)) {
-                return true;
-            }
-            if (id.length() > 1 && id.endsWith("e")) {
-                String base = id.substring(0, id.length() - 1);
-                return base.equals(uniqueId) || base.equals(origId) || base.equals(pairId);
-            }
-            return false;
-        }
-
-        boolean matchesRid(String rid) {
-            if (rid == null || rid.isEmpty()) {
-                return false;
-            }
-            return rid.equals(pairId) || rid.equals(origId) || rid.equals(uniqueId);
+        boolean hasRid() {
+            return ridKey != null;
         }
     }
 
     /**
-     * Resolve a closer to an unmatched opener: own {@code id} first (MemoQ pair
-     * number), then {@code rid}, then innermost leftover opener (nested 1/2/3).
+     * Resolve a closer to an unmatched opener using MemoQ namespaces: a closer
+     * with {@code rid} matches only an opener with that {@code rid}; a closer
+     * without {@code rid} matches only an id-only opener with the same original
+     * {@code id}. Never match id against rid. Fallback: innermost leftover.
      */
     private static String takeOpenerForCloser(List<OpenedPair> openers, Element closer) {
         if (openers == null || openers.isEmpty() || closer == null) {
@@ -184,9 +178,11 @@ public class ToOpenXliff {
         }
         String id = normalizeInlineId(closer.getAttributeValue("id"));
         String rid = closer.getAttributeValue("rid", "");
-        OpenedPair match = findOpened(openers, p -> p.matchesId(id));
-        if (match == null) {
-            match = findOpened(openers, p -> p.matchesRid(rid));
+        OpenedPair match;
+        if (!rid.isEmpty()) {
+            match = findOpened(openers, p -> p.hasRid() && rid.equals(p.ridKey));
+        } else {
+            match = findOpened(openers, p -> !p.hasRid() && id != null && id.equals(p.origId));
         }
         if (match == null) {
             match = openers.get(openers.size() - 1);
@@ -213,6 +209,14 @@ public class ToOpenXliff {
         return id != null ? id : "";
     }
 
+    private static String originalRid(Element e) {
+        if (e == null) {
+            return "";
+        }
+        String rid = e.getAttributeValue("rid", "");
+        return rid != null ? rid : "";
+    }
+
     private static Set<String> findPairedKeys(Element child) {
         Set<String> openers = new HashSet<>();
         Set<String> closers = new HashSet<>();
@@ -235,16 +239,6 @@ public class ToOpenXliff {
                 openers.add(key);
             } else if (isPairingCloser(e.getName())) {
                 closers.add(key);
-                // MemoQ sometimes gives a closer a mismatched rid (e.g. id="1" rid="3").
-                // Also register the id-based pair so findPairedKeys keeps the real opener.
-                String id = normalizeInlineId(e.getAttributeValue("id"));
-                String rid = e.getAttributeValue("rid", "");
-                if (id != null && !id.isEmpty() && (rid.isEmpty() || !rid.equals(id))) {
-                    String idKey = pairingKeyForPair(e.getName(), id);
-                    if (idKey != null && !idKey.equals(key)) {
-                        closers.add(idKey);
-                    }
-                }
             }
         }
         int openerCount = 0;
@@ -262,8 +256,8 @@ public class ToOpenXliff {
                 closerCount++;
             }
         }
-        // Same number of openers and closers: keep every opener even when MemoQ
-        // rids do not intersect (nested {} / hlnk / rpr with a reused rid).
+        // Same number of openers and closers: keep every opener. Namespaced
+        // retainAll is for unbalanced segments only.
         if (openerCount == closerCount && openerCount > 0) {
             return openers;
         }
@@ -1149,7 +1143,7 @@ public class ToOpenXliff {
         }
         if (isPairingOpener(name)) {
             marker.setAttribute("rid", pairId);
-            unmatchedOpeners.add(new OpenedPair(uniqueId, origId, pairId));
+            unmatchedOpeners.add(new OpenedPair(uniqueId, origId, originalRid(e)));
         } else {
             String openerId = takeOpenerForCloser(unmatchedOpeners, e);
             // rid on the closer is the opener's unique id so ToXliff2 can set startRef.
