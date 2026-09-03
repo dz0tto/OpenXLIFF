@@ -877,16 +877,40 @@ public class ToXliff2 {
 			if (startRef.isEmpty()) {
 				startRef = id;
 			}
-			String openerId = !startRef.isEmpty() ? openerIds.get(startRef) : null;
-			if (openerId != null || openerIds.containsKey(startRef)) {
-				tag.setAttribute("startRef", openerId != null ? openerId : startRef);
-			} else if (!startRef.isEmpty() && !startRef.equals(id)) {
-				tag.setAttribute("startRef", startRef);
+			String fromCloserId = closerStartRefFromUniquifiedId(id, openerIds);
+			if (fromCloserId != null) {
+				tag.setAttribute("startRef", fromCloserId);
 			} else {
-				tag.setAttribute("isolated", "yes");
+				String openerId = !startRef.isEmpty() ? openerIds.get(startRef) : null;
+				if (openerId != null || openerIds.containsKey(startRef)) {
+					tag.setAttribute("startRef", openerId != null ? openerId : startRef);
+				} else if (!startRef.isEmpty() && !startRef.equals(id)) {
+					tag.setAttribute("startRef", startRef);
+				} else {
+					tag.setAttribute("isolated", "yes");
+				}
 			}
 		}
 		return tag;
+	}
+
+	/**
+	 * {@code uniqueInlineId} closers use {@code id+"e"} (e.g. {@code 1e}) while the opener
+	 * stayed {@code 1}. When rid still points at the wrong pair, recover startRef from that id.
+	 */
+	private static String closerStartRefFromUniquifiedId(String closerId, Map<String, String> openerIds) {
+		if (closerId == null || closerId.length() < 2 || !closerId.endsWith("e") || openerIds == null) {
+			return null;
+		}
+		String base = closerId.substring(0, closerId.length() - 1);
+		if (!base.matches("\\d+")) {
+			return null;
+		}
+		String openerId = openerIds.get(base);
+		if (openerId != null) {
+			return openerId;
+		}
+		return openerIds.containsKey(base) ? base : null;
 	}
 
 	/** Closer with the same id as a preceding opener (MemoQ same-id bpt/ept, no rid). */
