@@ -122,6 +122,17 @@ public class ToOpenXliff {
         return e.hasAttribute("rid") || isPreservedInline(e);
     }
 
+    private static String pairingFamily(String name) {
+        return "bpt".equals(name) || "ept".equals(name) ? "be" : "bx";
+    }
+
+    private static String pairingKeyForPair(String name, String pair) {
+        if (pair == null || pair.isEmpty()) {
+            return null;
+        }
+        return pairingFamily(name) + ":" + pair;
+    }
+
     /** Pairing key: {@code rid} if present, else {@code id}. Prefixed by family so bpt/ept and bx/ex do not collide. */
     private static String pairingKey(Element e) {
         if (e == null || !isPairingName(e.getName())) {
@@ -130,11 +141,18 @@ public class ToOpenXliff {
         String rid = e.getAttributeValue("rid", "");
         String id = normalizeInlineId(e.getAttributeValue("id"));
         String pair = !rid.isEmpty() ? rid : (id != null ? id : "");
-        if (pair.isEmpty()) {
+        return pairingKeyForPair(e.getName(), pair);
+    }
+
+    private static String popOpenerId(Map<String, Deque<String>> openerIds, String key) {
+        if (key == null || openerIds == null) {
             return null;
         }
-        String family = "bpt".equals(e.getName()) || "ept".equals(e.getName()) ? "be" : "bx";
-        return family + ":" + pair;
+        Deque<String> q = openerIds.get(key);
+        if (q == null || q.isEmpty()) {
+            return null;
+        }
+        return q.removeFirst();
     }
 
     private static String pairingPairId(Element e) {
@@ -168,6 +186,16 @@ public class ToOpenXliff {
                 openers.add(key);
             } else if (isPairingCloser(e.getName())) {
                 closers.add(key);
+                // MemoQ sometimes gives a closer a mismatched rid (e.g. id="1" rid="3").
+                // Also register the id-based pair so findPairedKeys keeps the real opener.
+                String id = normalizeInlineId(e.getAttributeValue("id"));
+                String rid = e.getAttributeValue("rid", "");
+                if (id != null && !id.isEmpty() && (rid.isEmpty() || !rid.equals(id))) {
+                    String idKey = pairingKeyForPair(e.getName(), id);
+                    if (idKey != null && !idKey.equals(key)) {
+                        closers.add(idKey);
+                    }
+                }
             }
         }
         openers.retainAll(closers);
@@ -1057,11 +1085,14 @@ public class ToOpenXliff {
                 openerIds.computeIfAbsent(key, k -> new ArrayDeque<>()).addLast(uniqueId);
             }
         } else {
-            String openerId = null;
-            if (key != null) {
-                Deque<String> q = openerIds.get(key);
-                if (q != null && !q.isEmpty()) {
-                    openerId = q.removeFirst();
+            String openerId = popOpenerId(openerIds, key);
+            if (openerId == null) {
+                String id = normalizeInlineId(e.getAttributeValue("id"));
+                if (id != null && !id.isEmpty()) {
+                    String altKey = pairingKeyForPair(name, id);
+                    if (altKey != null && !altKey.equals(key)) {
+                        openerId = popOpenerId(openerIds, altKey);
+                    }
                 }
             }
             // rid on the closer is the opener's unique id so ToXliff2 can set startRef.

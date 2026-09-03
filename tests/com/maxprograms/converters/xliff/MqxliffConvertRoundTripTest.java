@@ -58,6 +58,7 @@ public final class MqxliffConvertRoundTripTest {
 		testApprovedWithoutTargetStaysInitial(catalog);
 		testNoContextGroupWithoutIdAttribute(catalog);
 		testTsLockedPropagatesToSubState(catalog);
+		testNestedTripleWrongEptRidGetsDistinctStartRefs(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -583,6 +584,50 @@ public final class MqxliffConvertRoundTripTest {
 			int targetEnd = out.indexOf("</target>", targetAt);
 			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
 			assertContains(name + " target ph", target, "<ph");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Nested {} + hlnk + rpr: MemoQ may give the outer closer id="1" rid="3". Must still
+	 * emit three distinct sc/ec pairs (startRef 3, 2, 1) — not two closers on startRef 3.
+	 */
+	private static void testNestedTripleWrongEptRidGetsDistinctStartRefs(Path catalog) throws Exception {
+		String name = "nested triple wrong ept rid keeps distinct startRefs";
+		Path dir = Files.createTempDirectory("oxlf-mq-nested-rid-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1" rid="1">{}</bpt><bpt id="2" rid="2">&lt;hlnk id='rld6' fileName='document.xml'/&gt;</bpt><bpt id="3" rid="3">&lt;rpr id='2'/&gt;</bpt>https://store.steampowered.com/app/2186680/Warhammer_40000_Rogue_Trader/<ept id="4" rid="3">{}</ept><ept id="5" rid="2">&lt;/hlnk&gt;</ept><ept id="1" rid="3">{}</ept></source>
+					    <target xml:space="preserve"><bpt ctype="bold" id="1" rid="1">{}</bpt><bpt id="2" rid="2">&lt;hlnk id='rld6' fileName='document.xml'/&gt;</bpt><bpt id="3" rid="3">&lt;rpr id='2'/&gt;</bpt>https://store.steampowered.com/app/2186680/Warhammer_40000_Rogue_Trader/<ept id="4" rid="3">{}</ept><ept id="5" rid="2">&lt;/hlnk&gt;</ept><ept id="1" rid="3">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertEquals(name + " sc count (source+target)", 6, countOccurrences(xml, "<sc"));
+			assertEquals(name + " ec count (source+target)", 6, countOccurrences(xml, "<ec"));
+			assertContains(name, xml, "startRef=\"1\"");
+			assertContains(name, xml, "startRef=\"2\"");
+			assertContains(name, xml, "startRef=\"3\"");
+			int sourceAt = xml.indexOf("<source>");
+			int sourceEnd = xml.indexOf("</source>", sourceAt);
+			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : xml;
+			assertEquals(name + " one ec per startRef=3 in source", 1,
+					countOccurrences(source, "startRef=\"3\""));
+			assertEquals(name + " one ec per startRef=1 in source", 1,
+					countOccurrences(source, "startRef=\"1\""));
+			assertContains(name, source, "id=\"1e\"");
+			assertContains(name, source, "startRef=\"1\"");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
