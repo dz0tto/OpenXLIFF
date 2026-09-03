@@ -59,6 +59,7 @@ public final class MqxliffConvertRoundTripTest {
 		testNoContextGroupWithoutIdAttribute(catalog);
 		testTsLockedPropagatesToSubState(catalog);
 		testNestedTripleWrongEptRidGetsDistinctStartRefs(catalog);
+		testNestedTripleWrongEptRid2GetsStartRef1(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -628,6 +629,51 @@ public final class MqxliffConvertRoundTripTest {
 					countOccurrences(source, "startRef=\"1\""));
 			assertContains(name, source, "id=\"1e\"");
 			assertContains(name, source, "startRef=\"1\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Same nest, but the {} closer reuses rid=2 (hlnk). Must not become a second /2
+	 * (startRef=2 on id=1e). Expected pills: 1 2 3 /3 /2 /1.
+	 */
+	private static void testNestedTripleWrongEptRid2GetsStartRef1(Path catalog) throws Exception {
+		String name = "nested triple ept rid=2 keeps startRef 1 on 1e";
+		Path dir = Files.createTempDirectory("oxlf-mq-nested-rid2-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1" rid="1">{}</bpt><bpt id="2" rid="2">&lt;hlnk id="rId7" fileName="document.xml"&gt;</bpt><bpt id="3" rid="3">&lt;rpr id="2"&gt;</bpt>https://store.steampowered.com/app/1184370/Pathfinder_Wrath_of_the_Righteous__Enhanced_Edition/<ept id="4" rid="3">&lt;/rpr id="2" transform="close"&gt;</ept><ept id="5" rid="2">&lt;/hlnk&gt;</ept><ept id="1" rid="2">{}</ept></source>
+					    <target xml:space="preserve"><bpt ctype="bold" id="1" rid="1">{}</bpt><bpt id="2" rid="2">&lt;hlnk id="rId7" fileName="document.xml"&gt;</bpt><bpt id="3" rid="3">&lt;rpr id="2"&gt;</bpt>https://store.steampowered.com/app/1184370/Pathfinder_Wrath_of_the_Righteous__Enhanced_Edition/<ept id="4" rid="3">&lt;/rpr id="2" transform="close"&gt;</ept><ept id="5" rid="2">&lt;/hlnk&gt;</ept><ept id="1" rid="2">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			int sourceAt = xml.indexOf("<source>");
+			int sourceEnd = xml.indexOf("</source>", sourceAt);
+			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : xml;
+			assertEquals(name + " sc count in source", 3, countOccurrences(source, "<sc"));
+			assertEquals(name + " ec count in source", 3, countOccurrences(source, "<ec"));
+			assertEquals(name + " one startRef=3", 1, countOccurrences(source, "startRef=\"3\""));
+			assertEquals(name + " one startRef=2", 1, countOccurrences(source, "startRef=\"2\""));
+			assertEquals(name + " one startRef=1", 1, countOccurrences(source, "startRef=\"1\""));
+			int oneE = source.indexOf("id=\"1e\"");
+			assertFalse(name + " missing id=1e", oneE < 0);
+			int tagStart = source.lastIndexOf("<ec", oneE);
+			int tagEnd = source.indexOf("/>", oneE);
+			String oneETag = tagStart >= 0 && tagEnd > tagStart ? source.substring(tagStart, tagEnd) : "";
+			assertContains(name + " 1e startRef", oneETag, "startRef=\"1\"");
+			assertFalse(name + " 1e must not use startRef=2", oneETag.contains("startRef=\"2\""));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
