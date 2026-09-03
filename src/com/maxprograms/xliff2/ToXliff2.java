@@ -21,14 +21,19 @@ import java.nio.charset.StandardCharsets;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import javax.xml.parsers.ParserConfigurationException;
 
 import org.xml.sax.SAXException;
 
 import com.maxprograms.converters.Constants;
+import com.maxprograms.converters.xliff.ToOpenXliff;
 import com.maxprograms.xml.Attribute;
 import com.maxprograms.xml.CatalogBuilder;
 import com.maxprograms.xml.Document;
@@ -59,19 +64,18 @@ public class ToXliff2 {
 	}
 
 	private static boolean isLevshaStylePh(Element ph) {
-		// Levsha <x equiv-text> / ToOpenXliff markers, or native MemoQ mq:rxt ph text.
+		// Levsha <x equiv-text> / ToOpenXliff markers, or any MemoQ mq:* payload.
 		if (ph.hasAttribute("equiv-text") || ph.hasAttribute("equiv") || ph.hasAttribute("ctype")) {
 			return true;
 		}
 		String text = ph.getText();
+		if (ToOpenXliff.isMemoQPayload(text)) {
+			return true;
+		}
 		if (text == null) {
 			return false;
 		}
 		String trimmed = text.trim();
-		if (trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req") || trimmed.startsWith("&lt;mq:rxt")
-				|| trimmed.startsWith("&lt;mq:rxt-req")) {
-			return true;
-		}
 		return trimmed.startsWith("<x") && (trimmed.contains("equiv-text") || trimmed.contains("ctype"));
 	}
 
@@ -538,20 +542,35 @@ public class ToXliff2 {
 	}
 
 	private static void harvestInline(Element originalData, Element tagAttributes, Element tag) {
-		if ("ph".equals(tag.getName())) {
-			boolean levshaStyle = isLevshaStylePh(tag);
+		if ("ph".equals(tag.getName()) || ToOpenXliff.isPairingMarker(tag)) {
+			boolean levshaStyle = ToOpenXliff.isPairingMarker(tag) || isLevshaStylePh(tag);
 			String dataId = levshaStyle ? tag.getAttributeValue("id") : "ph" + tag.getAttributeValue("id");
-			if (!containsTag(originalData, dataId)) {
-				Element data = new Element("data");
-				data.setAttribute("id", dataId);
-				if (levshaStyle) {
-					data.setText(tag.getText());
-				} else {
-					data.setContent(tag.getContent());
+			String newPayload = tag.getText() != null ? tag.getText() : "";
+			Element existing = findData(originalData, dataId);
+			if (existing != null) {
+				String oldPayload = existing.getText() != null ? existing.getText() : "";
+				if (oldPayload.equals(newPayload)) {
+					return;
 				}
-				originalData.addContent(data);
-				storeAttributes(tagAttributes, tag, dataId);
+				Set<String> used = collectDataIds(originalData);
+				String unique = ToOpenXliff.uniqueInlineId(dataId, used);
+				if (levshaStyle) {
+					tag.setAttribute("id", unique);
+				} else if (unique.startsWith("ph") && dataId.startsWith("ph")) {
+					tag.setAttribute("id", unique.substring(2));
+				}
+				dataId = unique;
 			}
+			Element data = new Element("data");
+			data.setAttribute("id", dataId);
+			if (levshaStyle) {
+				data.setText(tag.getText());
+			} else {
+				data.setContent(tag.getContent());
+			}
+			originalData.addContent(data);
+			storeAttributes(tagAttributes, tag, dataId);
+			storeOriginalName(tagAttributes, tag.getName(), dataId);
 			return;
 		}
 		if ("bpt".equals(tag.getName())) {
@@ -607,15 +626,29 @@ public class ToXliff2 {
 	}
 
 	private static boolean containsTag(Element originalData, String id) {
+		return findData(originalData, id) != null;
+	}
+
+	private static Element findData(Element originalData, String id) {
 		List<Element> tags = originalData.getChildren("data");
 		Iterator<Element> it = tags.iterator();
 		while (it.hasNext()) {
 			Element tag = it.next();
 			if (tag.getAttributeValue("id").equals(id)) {
-				return true;
+				return tag;
 			}
 		}
-		return false;
+		return null;
+	}
+
+	private static Set<String> collectDataIds(Element originalData) {
+		Set<String> used = new HashSet<>();
+		List<Element> tags = originalData.getChildren("data");
+		Iterator<Element> it = tags.iterator();
+		while (it.hasNext()) {
+			used.add(it.next().getAttributeValue("id"));
+		}
+		return used;
 	}
 
 	private static void storeAttributes(Element tagAttributes, Element tag, String id) {
@@ -624,10 +657,7 @@ public class ToXliff2 {
 		}
 		List<Attribute> atts = tag.getAttributes();
 		if (atts.size() > 1) {
-			Element group = new Element("mda:metaGroup");
-			group.setAttribute("category", "attributes");
-			group.setAttribute("id", id);
-			tagAttributes.addContent(group);
+			Element group = findOrCreateAttrGroup(tagAttributes, id);
 			Iterator<Attribute> it = atts.iterator();
 			while (it.hasNext()) {
 				Attribute a = it.next();
@@ -641,11 +671,49 @@ public class ToXliff2 {
 		}
 	}
 
+	/** Persist the 1.2 element name so FromXliff2 can restore {@code bpt}/{@code ept}/{@code bx}/{@code ex}. */
+	private static void storeOriginalName(Element tagAttributes, String name, String id) {
+		if (tagAttributes == null || name == null || name.isEmpty()) {
+			return;
+		}
+		Element group = findOrCreateAttrGroup(tagAttributes, id);
+		Element meta = new Element("mda:meta");
+		meta.setAttribute("type", "oxlf-original");
+		meta.setText(name);
+		group.addContent(meta);
+	}
+
+	private static Element findOrCreateAttrGroup(Element tagAttributes, String id) {
+		List<Element> groups = tagAttributes.getChildren("mda:metaGroup");
+		Iterator<Element> it = groups.iterator();
+		while (it.hasNext()) {
+			Element group = it.next();
+			if ("attributes".equals(group.getAttributeValue("category"))
+					&& id.equals(group.getAttributeValue("id"))) {
+				return group;
+			}
+		}
+		Element group = new Element("mda:metaGroup");
+		group.setAttribute("category", "attributes");
+		group.setAttribute("id", id);
+		tagAttributes.addContent(group);
+		return group;
+	}
+
 	private static List<XMLNode> harvestContent(Element e, Element tagAttributes) throws SAXException, IOException {
+		return harvestContent(e, tagAttributes, new HashMap<>());
+	}
+
+	private static List<XMLNode> harvestContent(Element e, Element tagAttributes, Map<String, String> openerIds)
+			throws SAXException, IOException {
 		if ("sub".equals(e.getName())) {
 			throw new SAXException(Messages.getString("ToXliff2.3"));
 		}
 		List<XMLNode> result = new ArrayList<>();
+		if (ToOpenXliff.isPairingMarker(e)) {
+			result.add(emitPairedScEc(e, openerIds));
+			return result;
+		}
 		if ("ph".equals(e.getName())) {
 			Element ph = new Element("ph");
 			String rawId = e.getAttributeValue("id");
@@ -732,7 +800,7 @@ public class ToXliff2 {
 					newContent.add(node);
 				}
 				if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
-					newContent.addAll(harvestContent((Element) node, tagAttributes));
+					newContent.addAll(harvestContent((Element) node, tagAttributes, openerIds));
 				}
 			}
 			mrk.setContent(newContent);
@@ -753,7 +821,7 @@ public class ToXliff2 {
 					newContent.add(node);
 				}
 				if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
-					newContent.addAll(harvestContent((Element) node, tagAttributes));
+					newContent.addAll(harvestContent((Element) node, tagAttributes, openerIds));
 				}
 			}
 			pc.setContent(newContent);
@@ -782,10 +850,38 @@ public class ToXliff2 {
 			}
 			if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
 				Element tag = (Element) node;
-				result.addAll(harvestContent(tag, tagAttributes));
+				result.addAll(harvestContent(tag, tagAttributes, openerIds));
 			}
 		}
 		return result;
+	}
+
+	private static Element emitPairedScEc(Element e, Map<String, String> openerIds) {
+		boolean opener = ToOpenXliff.isPairingOpener(e.getName());
+		String id = e.getAttributeValue("id");
+		String rid = e.getAttributeValue("rid", "");
+		Element tag = new Element(opener ? "sc" : "ec");
+		tag.setAttribute("id", id);
+		tag.setAttribute("dataRef", id);
+		String equiv = extractEquivText(e);
+		if (equiv != null && !equiv.isEmpty()) {
+			tag.setAttribute("equiv", equiv);
+		}
+		if (opener) {
+			if (!rid.isEmpty()) {
+				openerIds.put(rid, id);
+			}
+			openerIds.put(id, id);
+		} else {
+			String startRef = !rid.isEmpty() ? rid : "";
+			if (!startRef.isEmpty()) {
+				String openerId = openerIds.get(startRef);
+				tag.setAttribute("startRef", openerId != null ? openerId : startRef);
+			} else {
+				tag.setAttribute("isolated", "yes");
+			}
+		}
+		return tag;
 	}
 
 	private static Element deepCopyElement(Element original) {

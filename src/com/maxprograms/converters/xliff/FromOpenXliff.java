@@ -260,7 +260,7 @@ public class FromOpenXliff {
     }
 
     /**
-     * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:rxt} payloads stay inside
+     * Restore inline codes into the bilingual skeleton. MemoQ {@code mq:*} payloads stay inside
      * {@code <ph>} (escaped text) — expanding them as real {@code <mq:rxt>} elements breaks
      * LevshaXLIFF merge and requires Swordfish post-processing.
      */
@@ -270,21 +270,38 @@ public class FromOpenXliff {
             text = "";
         }
         String trimmed = text.trim();
-        boolean mqPayload = trimmed.startsWith("<mq:rxt") || trimmed.startsWith("<mq:rxt-req");
-        if (mqPayload) {
-            sb.append("<ph");
-            String id = e.getAttributeValue("id", "");
-            if (!id.isEmpty()) {
-                sb.append(" id=\"");
-                sb.append(XMLUtils.cleanText(id).replace("\"", "&quot;"));
-                sb.append('"');
+        boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
+        String name = e.getName();
+        boolean pairing = ToOpenXliff.isPairingName(name);
+        if (mqPayload || pairing) {
+            if (!pairing) {
+                name = "ph";
             }
+            sb.append('<');
+            sb.append(name);
+            appendAttr(sb, "id", e.getAttributeValue("id", ""));
+            appendAttr(sb, "rid", e.getAttributeValue("rid", ""));
             sb.append('>');
-            sb.append(XMLUtils.cleanText(text));
-            sb.append("</ph>");
+            if (mqPayload || !text.isEmpty()) {
+                sb.append(XMLUtils.cleanText(text));
+            }
+            sb.append("</");
+            sb.append(name);
+            sb.append('>');
             return;
         }
         sb.append(text);
+    }
+
+    private static void appendAttr(StringBuilder sb, String name, String value) {
+        if (value == null || value.isEmpty()) {
+            return;
+        }
+        sb.append(' ');
+        sb.append(name);
+        sb.append("=\"");
+        sb.append(XMLUtils.cleanText(value).replace("\"", "&quot;"));
+        sb.append('"');
     }
 
     private static Element processMrk(Element e) {

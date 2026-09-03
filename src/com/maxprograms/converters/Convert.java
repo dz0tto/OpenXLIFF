@@ -102,6 +102,7 @@ public class Convert {
 		boolean xliff22 = false;
 		boolean strict = false;
 		boolean mustResegment = false;
+		boolean pairedInline = false;
 
 		for (int i = 0; i < arguments.length; i++) {
 			String arg = arguments[i];
@@ -194,6 +195,9 @@ public class Convert {
 			}
 			if (arg.equals("-strict")) {
 				strict = true;
+			}
+			if (arg.equals("-pairedInline")) {
+				pairedInline = true;
 			}
 		}
 		if (arguments.length < 4) {
@@ -350,6 +354,9 @@ public class Convert {
 		if (strict) {
 			params.put("strict", "yes");
 		}
+		if (pairedInline) {
+			params.put("pairedInline", "yes");
+		}
 		List<String> result = run(params);
 
 		if (!Constants.SUCCESS.equals(result.get(0))) {
@@ -472,6 +479,7 @@ public class Convert {
 				params.put("generic", "yes");
 				result = Xml2Xliff.run(params);
 			} else if (format.equals(FileFormats.XLIFF)) {
+				// includeNonTranslatable / pairedInline stay in params (opt-in; default off).
 				result = ToOpenXliff.run(params);
 			} else {
 				result.add(Constants.ERROR);
@@ -589,6 +597,20 @@ public class Convert {
 				params.put("ignoresvg", "yes");
 			}
 			params.put("xmlfilter", xmlfilter);
+			if (file.has("pairedInline")) {
+				boolean yes = file.optBoolean("pairedInline", false)
+						|| "yes".equalsIgnoreCase(file.optString("pairedInline"));
+				if (yes) {
+					params.put("pairedInline", "yes");
+				}
+			}
+			if (file.has("includeNonTranslatable")) {
+				boolean yes = file.optBoolean("includeNonTranslatable", false)
+						|| "yes".equalsIgnoreCase(file.optString("includeNonTranslatable"));
+				if (yes) {
+					params.put("includeNonTranslatable", "yes");
+				}
+			}
 			List<String> result = run(params);
 			if (!Constants.SUCCESS.equals(result.get(0))) {
 				throw new IOException(result.get(1));

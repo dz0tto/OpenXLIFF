@@ -15,10 +15,15 @@ import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.net.URISyntaxException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Vector;
 
 import javax.xml.parsers.ParserConfigurationException;
@@ -41,8 +46,10 @@ public class ToOpenXliff {
 
     private static List<String> namespaces;
     private static int tag;
+    private static final Set<String> usedIds = new HashSet<>();
     private static boolean preserveSpaces = false;
     private static boolean includeNonTranslatable = false;
+    private static boolean pairedInline = false;
     private static List<String[]> sourcetags;
 
     private static String normalizeInlineId(String rawId) {
@@ -61,25 +68,170 @@ public class ToOpenXliff {
         return e.hasAttribute("equiv-text") || e.hasAttribute("ctype");
     }
 
-    /** Native MemoQ {@code <ph>&lt;mq:rxt…/&gt;</ph>} (or decoded child text). */
-    private static boolean isMemoQPayloadInline(Element e) {
-        if (e == null) {
-            return false;
-        }
-        String text = e.getText();
+    /**
+     * True if {@code text} is a MemoQ inline payload ({@code <mq:…} or escaped
+     * {@code &lt;mq:}). Covers {@code mq:ch}, {@code mq:rxt}, {@code mq:rxt-req},
+     * {@code mq:nt}, {@code mq:it}, …
+     */
+    public static boolean isMemoQPayload(String text) {
         if (text == null || text.isBlank()) {
             return false;
         }
         String t = text.trim();
-        return t.startsWith("<mq:rxt") || t.startsWith("<mq:rxt-req") || t.startsWith("&lt;mq:rxt")
-                || t.startsWith("&lt;mq:rxt-req");
+        return t.startsWith("<mq:") || t.startsWith("&lt;mq:");
+    }
+
+    /** Native MemoQ {@code <ph>&lt;mq:…/&gt;</ph>}, or a real {@code mq:*} element. */
+    private static boolean isMemoQPayloadInline(Element e) {
+        if (e == null) {
+            return false;
+        }
+        if (isMemoQPayload(e.getText())) {
+            return true;
+        }
+        String name = e.getName();
+        return name != null && name.startsWith("mq:");
     }
 
     private static boolean isPreservedInline(Element e) {
         return isLevshaStyleInline(e) || isMemoQPayloadInline(e);
     }
 
+    /** XLIFF 1.2 pairing tags that can become {@code sc}/{@code ec} when {@code pairedInline} is on. */
+    public static boolean isPairingName(String name) {
+        return "bpt".equals(name) || "ept".equals(name) || "bx".equals(name) || "ex".equals(name);
+    }
+
+    public static boolean isPairingOpener(String name) {
+        return "bpt".equals(name) || "bx".equals(name);
+    }
+
+    public static boolean isPairingCloser(String name) {
+        return "ept".equals(name) || "ex".equals(name);
+    }
+
+    /**
+     * True when {@code e} is a pairing marker kept in the 1.2 intermediate (has {@code rid}
+     * or a preserved MemoQ/Levsha payload). Native {@code bpt}/{@code ept} without those
+     * stay on the flatten-to-{@code ph} path in {@code ToXliff2}.
+     */
+    public static boolean isPairingMarker(Element e) {
+        if (e == null || !isPairingName(e.getName())) {
+            return false;
+        }
+        return e.hasAttribute("rid") || isPreservedInline(e);
+    }
+
+    /** Pairing key: {@code rid} if present, else {@code id}. Prefixed by family so bpt/ept and bx/ex do not collide. */
+    private static String pairingKey(Element e) {
+        if (e == null || !isPairingName(e.getName())) {
+            return null;
+        }
+        String rid = e.getAttributeValue("rid", "");
+        String id = normalizeInlineId(e.getAttributeValue("id"));
+        String pair = !rid.isEmpty() ? rid : (id != null ? id : "");
+        if (pair.isEmpty()) {
+            return null;
+        }
+        String family = "bpt".equals(e.getName()) || "ept".equals(e.getName()) ? "be" : "bx";
+        return family + ":" + pair;
+    }
+
+    private static String pairingPairId(Element e) {
+        String rid = e.getAttributeValue("rid", "");
+        if (!rid.isEmpty()) {
+            return rid;
+        }
+        String id = normalizeInlineId(e.getAttributeValue("id"));
+        return id != null ? id : "";
+    }
+
+    private static Set<String> findPairedKeys(Element child) {
+        Set<String> openers = new HashSet<>();
+        Set<String> closers = new HashSet<>();
+        if (child == null) {
+            return openers;
+        }
+        List<XMLNode> content = child.getContent();
+        Iterator<XMLNode> it = content.iterator();
+        while (it.hasNext()) {
+            XMLNode node = it.next();
+            if (node.getNodeType() != XMLNode.ELEMENT_NODE) {
+                continue;
+            }
+            Element e = (Element) node;
+            String key = pairingKey(e);
+            if (key == null) {
+                continue;
+            }
+            if (isPairingOpener(e.getName())) {
+                openers.add(key);
+            } else if (isPairingCloser(e.getName())) {
+                closers.add(key);
+            }
+        }
+        openers.retainAll(closers);
+        return openers;
+    }
+
+    /** Reset the per-source/target id counter and used-id set. */
+    private static void resetInlineIds() {
+        tag = 1;
+        usedIds.clear();
+    }
+
+    /**
+     * Derive a unique NMTOKEN from {@code preferred}: keep it if free, else
+     * {@code preferred + "e"}, then {@code preferred + "_2"}, {@code _3}, …
+     */
+    public static String uniqueInlineId(String preferred, Set<String> used) {
+        if (preferred == null || preferred.isEmpty()) {
+            return preferred;
+        }
+        if (!used.contains(preferred)) {
+            used.add(preferred);
+            return preferred;
+        }
+        String closer = preferred + "e";
+        if (!used.contains(closer)) {
+            used.add(closer);
+            return closer;
+        }
+        int n = 2;
+        String candidate;
+        do {
+            candidate = preferred + "_" + n++;
+        } while (used.contains(candidate));
+        used.add(candidate);
+        return candidate;
+    }
+
     /** Short display hint from MemoQ {@code displaytext}/{@code val} without re-serializing attrs. */
+    /**
+     * Copy opaque MemoQ/Levsha payload onto the generated {@code ph}. Prefer
+     * {@code e.getText()} so a {@code <ph>} that already wraps {@code mq:*} is not
+     * re-serialized via {@code toString()} (that double-wraps {@code mq:ch}).
+     * {@code toString()} is only the fallback when the element has no child text
+     * (empty Levsha {@code <x/>}, or a real {@code mq:*} element).
+     */
+    private static void copyPreservedPayload(Element ph, Element e) {
+        String payload = e.getText();
+        if (payload == null || payload.isEmpty()) {
+            payload = e.toString();
+        }
+        String equiv = e.getAttributeValue("equiv-text", "");
+        if (equiv.isEmpty()) {
+            equiv = e.getAttributeValue("equiv", "");
+        }
+        if (equiv.isEmpty()) {
+            equiv = extractPayloadHint(payload);
+        }
+        ph.setText(payload);
+        if (!equiv.isEmpty()) {
+            ph.setAttribute("equiv-text", equiv);
+        }
+    }
+
     private static String extractPayloadHint(String payload) {
         if (payload == null || payload.isBlank()) {
             return "";
@@ -117,10 +269,15 @@ public class ToOpenXliff {
         if (isPreservedInline(e)) {
             String preserved = normalizeInlineId(e.getAttributeValue("id"));
             if (preserved != null && !preserved.isEmpty()) {
-                return preserved;
+                return uniqueInlineId(preserved, usedIds);
             }
         }
-        return String.valueOf(tag++);
+        while (usedIds.contains(String.valueOf(tag))) {
+            tag++;
+        }
+        String id = String.valueOf(tag++);
+        usedIds.add(id);
+        return id;
     }
 
     private ToOpenXliff() {
@@ -141,6 +298,7 @@ public class ToOpenXliff {
         String charlimAttribute = params.get("charlimAttribute");
         String contextAttribute = params.get("contextAttribute");
         includeNonTranslatable = "yes".equalsIgnoreCase(params.get("includeNonTranslatable"));
+        pairedInline = "yes".equalsIgnoreCase(params.get("pairedInline"));
         // idAttribute stays opt-in: callers that need the original TU id as x-identifier
         // context (e.g. Swordfish rematch) pass "idAttribute=id" explicitly. Defaulting it
         // here would silently add context-groups to every generic XLIFF conversion.
@@ -257,7 +415,7 @@ public class ToOpenXliff {
                     unit.setAttribute("xml:space", "preserve");
                 }
                 Element source = new Element("source");
-                tag = 1;
+                resetInlineIds();
                 sourcetags = new Vector<>();
                 source.setContent(getContent2x(src, true));
                 if (!hasTranslatableText(source)) {
@@ -313,7 +471,7 @@ public class ToOpenXliff {
                                 altTrans.setAttribute("match-quality", quality);
                             }
                             Element altSource = new Element("source");
-                            tag = 1;
+                            resetInlineIds();
                             sourcetags = new Vector<>();
                             altSource.setContent(getContent2x(match.getChild("source"), true));
                             altTrans.addContent(altSource);
@@ -669,7 +827,7 @@ public class ToOpenXliff {
                                 unit.setAttribute("xml:space", "preserve");
                             }
                             Element source = new Element("source");
-                            tag = 1;
+                            resetInlineIds();
                             source.setContent(getContent1x(e));
                             if (!hasTranslatableText(source)) {
                                 // Skip this mrk only — sibling segments/units must still convert.
@@ -679,7 +837,7 @@ public class ToOpenXliff {
                             Element target = new Element("target");
                             Element tgt = root.getChild("target");
                             if (tgt != null) {
-                                tag = 1;
+                                resetInlineIds();
                                 Element mrk = locateMrk(tgt, e.getAttributeValue("mid"));
                                 if (mrk != null) {
                                     target.setContent(getContent1x(mrk));
@@ -707,7 +865,7 @@ public class ToOpenXliff {
                 }
 
                 Element source = new Element("source");
-                tag = 1;
+                resetInlineIds();
                 source.setContent(getContent1x(root.getChild("source")));
                 if (!hasTranslatableText(source)) {
                     // Skip this trans-unit; recurse1x is invoked per element so siblings still run.
@@ -715,7 +873,7 @@ public class ToOpenXliff {
                 }
                 unit.addContent(source);
                 Element target = new Element("target");
-                tag = 1;
+                resetInlineIds();
                 target.setContent(getContent1x(root.getChild("target")));
                 unit.addContent(target);
 
@@ -733,11 +891,11 @@ public class ToOpenXliff {
                         altTrans.setAttribute("match-quality", quality);
                     }
                     Element altSource = new Element("source");
-                    tag = 1;
+                    resetInlineIds();
                     altSource.setContent(getContent1x(match.getChild("source")));
                     altTrans.addContent(altSource);
                     Element altTarget = new Element("target");
-                    tag = 1;
+                    resetInlineIds();
                     altTarget.setContent(getContent1x(match.getChild("target")));
                     altTrans.addContent(altTarget);
                     if (!altSource.getContent().isEmpty() && !altTarget.getContent().isEmpty()) {
@@ -796,6 +954,8 @@ public class ToOpenXliff {
 
     private static List<XMLNode> getContent1x(Element child) {
         List<XMLNode> result = new Vector<>();
+        Set<String> pairedKeys = pairedInline ? findPairedKeys(child) : Set.of();
+        Map<String, Deque<String>> openerIds = pairedInline ? new HashMap<>() : Map.of();
         if (child != null) {
             List<XMLNode> content = child.getContent();
             Iterator<XMLNode> it = content.iterator();
@@ -822,30 +982,20 @@ public class ToOpenXliff {
                         ph2.setText("</g>");
                         result.add(ph2);
                     }
-                    if ("x".equals(name) || "bx".equals(name) || "ex".equals(name) || "ph".equals(name)
-                            || "bpt".equals(name) || "ept".equals(name) || "it".equals(name)) {
+                    boolean keepPair = pairedInline && isPairingName(name)
+                            && pairedKeys.contains(pairingKey(e));
+                    if (keepPair) {
+                        result.add(emitPairingMarker(e, openerIds));
+                    } else if ("x".equals(name) || "bx".equals(name) || "ex".equals(name)
+                            || "ph".equals(name) || "bpt".equals(name) || "ept".equals(name)
+                            || "it".equals(name)) {
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
-                        // Levsha <x equiv-text> and native MemoQ <ph>mq:rxt</ph>: keep opaque child
-                        // text + display hint. Never Element.toString() for payloads — it collapses
-                        // nested entities (&amp;lt;→&lt;) and forces Swordfish rewrite workarounds.
+                        // Levsha <x equiv-text> and native MemoQ <ph>mq:…</ph>: keep opaque child
+                        // text + display hint. Never Element.toString() for text payloads — it
+                        // double-wraps mq:ch and collapses nested entities (&amp;lt;→&lt;).
                         if (isPreservedInline(e)) {
-                            String payload = e.getText();
-                            String equiv = e.getAttributeValue("equiv-text", "");
-                            if (equiv.isEmpty()) {
-                                equiv = e.getAttributeValue("equiv", "");
-                            }
-                            if (equiv.isEmpty()) {
-                                equiv = extractPayloadHint(payload);
-                            }
-                            if (payload != null && !payload.isEmpty()) {
-                                ph.setText(payload);
-                            } else {
-                                ph.setText(e.toString());
-                            }
-                            if (!equiv.isEmpty()) {
-                                ph.setAttribute("equiv-text", equiv);
-                            }
+                            copyPreservedPayload(ph, e);
                         } else {
                             ph.setText(e.toString());
                         }
@@ -862,13 +1012,67 @@ public class ToOpenXliff {
                         // keep the original markup as a placeholder so it survives the round trip.
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
-                        ph.setText(e.toString());
+                        if (isPreservedInline(e)) {
+                            copyPreservedPayload(ph, e);
+                        } else {
+                            ph.setText(e.toString());
+                        }
                         result.add(ph);
                     }
                 }
             }
         }
         return result;
+    }
+
+    /**
+     * Keep {@code bpt}/{@code ept}/{@code bx}/{@code ex} in the 1.2 intermediate so
+     * {@code ToXliff2} can emit {@code sc}/{@code ec}. Unique {@code id} per side;
+     * {@code rid} is the memoQ pair number (or the opener's unique id for the closer
+     * when that differs).
+     */
+    private static Element emitPairingMarker(Element e, Map<String, Deque<String>> openerIds) {
+        String name = e.getName();
+        Element marker = new Element(name);
+        String origId = normalizeInlineId(e.getAttributeValue("id"));
+        if (origId == null || origId.isEmpty()) {
+            origId = pairingPairId(e);
+        }
+        if (origId == null || origId.isEmpty()) {
+            while (usedIds.contains(String.valueOf(tag))) {
+                tag++;
+            }
+            origId = String.valueOf(tag++);
+        }
+        String uniqueId = uniqueInlineId(origId, usedIds);
+        marker.setAttribute("id", uniqueId);
+        String pairId = pairingPairId(e);
+        if (pairId.isEmpty()) {
+            pairId = uniqueId;
+        }
+        String key = pairingKey(e);
+        if (isPairingOpener(name)) {
+            marker.setAttribute("rid", pairId);
+            if (key != null) {
+                openerIds.computeIfAbsent(key, k -> new ArrayDeque<>()).addLast(uniqueId);
+            }
+        } else {
+            String openerId = null;
+            if (key != null) {
+                Deque<String> q = openerIds.get(key);
+                if (q != null && !q.isEmpty()) {
+                    openerId = q.removeFirst();
+                }
+            }
+            // rid on the closer is the opener's unique id so ToXliff2 can set startRef.
+            marker.setAttribute("rid", openerId != null ? openerId : pairId);
+        }
+        if (isPreservedInline(e)) {
+            copyPreservedPayload(marker, e);
+        } else if (e.getText() != null && !e.getText().isEmpty()) {
+            marker.setText(e.getText());
+        }
+        return marker;
     }
 
     /** Copy translate=no / ts=locked so ToXliff2 can emit editor lock state. */

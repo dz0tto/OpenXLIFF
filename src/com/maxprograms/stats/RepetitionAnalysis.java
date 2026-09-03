@@ -777,7 +777,8 @@ public class RepetitionAnalysis {
 				// discard all inline elements
 				// except <g>, <mrk>, <hi> and <sub>
 				if (!type.equals("bpt") && !type.equals("ept") && !type.equals("it") && !type.equals("ph")
-						&& !type.equals("ut") && !type.equals("x")) {
+						&& !type.equals("ut") && !type.equals("x") && !type.equals("bx") && !type.equals("ex")
+						&& !type.equals("pc") && !type.equals("sc") && !type.equals("ec")) {
 					text.append(' ');
 					text.append(pureText(el, space, translate));
 				}
@@ -889,6 +890,9 @@ public class RepetitionAnalysis {
 		src.removeChild("ph");
 		src.removeChild("bpt");
 		src.removeChild("ept");
+		src.removeChild("pc");
+		src.removeChild("sc");
+		src.removeChild("ec");
 		return src;
 	}
 

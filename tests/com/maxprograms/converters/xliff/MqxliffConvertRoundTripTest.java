@@ -41,6 +41,14 @@ public final class MqxliffConvertRoundTripTest {
 		testPreservesMismatchedTagIdsAndNestedEntities(catalog);
 		testKeepsLockedAndTagOnlyUnits(catalog);
 		testMergeRestoresPhPayloadsWithoutUnboundMq(catalog);
+		testMqChKeepsMemoQId(catalog);
+		testSameIdBptEptBothPayloadsSurvive(catalog);
+		testPairedInlineEmitsScEcWithStartRef(catalog);
+		testPairedInlineOverlappingPairs(catalog);
+		testPairedInlineBxEx(catalog);
+		testPairedInlineFlagOffStillFlattensToPh(catalog);
+		testPairedInlineUnpairedStaysPh(catalog);
+		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
 		testApprovedWithoutTargetStaysInitial(catalog);
@@ -156,6 +164,309 @@ public final class MqxliffConvertRoundTripTest {
 			// Must not expand payload into a real namespaced child of target
 			assertFalse(name + " bare mq:rxt element in target",
 					out.matches("(?s).*<target[^>]*>\\s*<mq:rxt[\\s\\S]*</target>.*"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 1: mq:ch inside ph keeps the memoQ id and opaque payload (no phN / double-wrap). */
+	private static void testMqChKeepsMemoQId(Path catalog) throws Exception {
+		String name = "mq:ch keeps memoQ id + opaque payload";
+		Path dir = Files.createTempDirectory("oxlf-mq-ch-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>Hello <ph id="1">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</ph> x <ph id="9">&lt;mq:ch val=" "/&gt;</ph> y <ph id="2">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ph></source>
+					    <target>Hallo <ph id="1">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</ph> x <ph id="9">&lt;mq:ch val=" "/&gt;</ph> y <ph id="2">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ph></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "id=\"1\"");
+			assertContains(name, xml, "id=\"9\"");
+			assertContains(name, xml, "id=\"2\"");
+			assertFalse(name + ": mq:ch must not be renumbered to ph1", xml.contains("id=\"ph1\""));
+			assertFalse(name + ": mq:ch must not use dataRef=ph1", xml.contains("dataRef=\"ph1\""));
+			String data9 = dataContent(xml, "9");
+			if (data9 == null) {
+				fail(name + ": missing <data id=\"9\">");
+			} else {
+				assertContains(name + " data 9", data9, "mq:ch");
+				assertFalse(name + ": data 9 must not wrap mq:ch in <ph id=\"9\">",
+						data9.contains("&lt;ph") || data9.contains("<ph"));
+			}
+			// equiv on the ch tag is a space (from val) or the val itself
+			boolean equivOk = xml.contains("equiv=\" \"") || xml.contains("equiv=\"&quot; \"")
+					|| (data9 != null && data9.contains("val=\" \""));
+			if (!equivOk) {
+				fail(name + ": expected equiv/val space on mq:ch, xml=" + xml);
+			}
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 1: same-id bpt/ept with different mq:rxt payloads both survive in originalData. */
+	private static void testSameIdBptEptBothPayloadsSurvive(Path catalog) throws Exception {
+		String name = "same-id bpt/ept both mq:rxt payloads survive";
+		Path dir = Files.createTempDirectory("oxlf-mq-bptept-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bpt id="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></source>
+					    <target>A <bpt id="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "val=\"[B]\"");
+			assertContains(name, xml, "val=\"[/B]\"");
+			assertContains(name, xml, "id=\"4\"");
+			assertContains(name, xml, "id=\"4e\"");
+			String data4 = dataContent(xml, "4");
+			String data4e = dataContent(xml, "4e");
+			if (data4 == null || data4e == null) {
+				fail(name + ": expected data id=4 and id=4e, xml=" + xml);
+			} else {
+				assertContains(name + " data 4", data4, "[B]");
+				assertContains(name + " data 4e", data4e, "[/B]");
+			}
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: pairedInline=yes emits sc/ec with startRef, both mq:rxt payloads in data. */
+	private static void testPairedInlineEmitsScEcWithStartRef(Path catalog) throws Exception {
+		String name = "pairedInline=yes emits sc/ec + startRef";
+		Path dir = Files.createTempDirectory("oxlf-mq-paired-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></source>
+					    <target>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			assertContains(name, xml, "startRef=");
+			assertContains(name, xml, "val=\"[B]\"");
+			assertContains(name, xml, "val=\"[/B]\"");
+			assertFalse(name + ": must not flatten both sides to ph-only",
+					!xml.contains("<sc") && xml.contains("<ph"));
+			String scId = firstAttr(xml, "<sc", "id");
+			String startRef = firstAttr(xml, "<ec", "startRef");
+			if (scId == null || startRef == null) {
+				fail(name + ": missing sc@id or ec@startRef, xml=" + xml);
+			} else {
+				assertEquals(name + " startRef points at sc id", scId, startRef);
+			}
+			String data4 = dataContent(xml, "4");
+			String data4e = dataContent(xml, "4e");
+			if (data4 == null || data4e == null) {
+				fail(name + ": expected data id=4 and id=4e, xml=" + xml);
+			} else {
+				assertContains(name + " data 4", data4, "[B]");
+				assertContains(name + " data 4e", data4e, "[/B]");
+			}
+			assertContains(name, xml, "id=\"4e\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: overlapping bpt/ept pairs become two sc/ec with correct startRefs. */
+	private static void testPairedInlineOverlappingPairs(Path catalog) throws Exception {
+		String name = "pairedInline overlapping bpt/ept";
+		Path dir = Files.createTempDirectory("oxlf-mq-overlap-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source><bpt id="1" rid="1">&lt;mq:rxt displaytext="1" val="[1]"/&gt;</bpt><bpt id="2" rid="2">&lt;mq:rxt displaytext="2" val="[2]"/&gt;</bpt>text<ept id="1" rid="1">&lt;mq:rxt displaytext="/1" val="[/1]"/&gt;</ept><ept id="2" rid="2">&lt;mq:rxt displaytext="/2" val="[/2]"/&gt;</ept></source>
+					    <target><bpt id="1" rid="1">&lt;mq:rxt displaytext="1" val="[1]"/&gt;</bpt><bpt id="2" rid="2">&lt;mq:rxt displaytext="2" val="[2]"/&gt;</bpt>text<ept id="1" rid="1">&lt;mq:rxt displaytext="/1" val="[/1]"/&gt;</ept><ept id="2" rid="2">&lt;mq:rxt displaytext="/2" val="[/2]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertEquals(name + " sc count (source+target)", 4, countOccurrences(xml, "<sc"));
+			assertEquals(name + " ec count (source+target)", 4, countOccurrences(xml, "<ec"));
+			assertContains(name, xml, "startRef=\"1\"");
+			assertContains(name, xml, "startRef=\"2\"");
+			assertContains(name, xml, "val=\"[1]\"");
+			assertContains(name, xml, "val=\"[/1]\"");
+			assertContains(name, xml, "val=\"[2]\"");
+			assertContains(name, xml, "val=\"[/2]\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: bx/ex pair the same way as bpt/ept. */
+	private static void testPairedInlineBxEx(Path catalog) throws Exception {
+		String name = "pairedInline bx/ex";
+		Path dir = Files.createTempDirectory("oxlf-mq-bxex-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bx id="7" rid="7"/>x<ex id="7" rid="7"/></source>
+					    <target>A <bx id="7" rid="7"/>x<ex id="7" rid="7"/></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			String scId = firstAttr(xml, "<sc", "id");
+			String startRef = firstAttr(xml, "<ec", "startRef");
+			if (scId == null || startRef == null) {
+				fail(name + ": missing sc@id or ec@startRef, xml=" + xml);
+			} else {
+				assertEquals(name + " startRef points at sc id", scId, startRef);
+			}
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: default (flag off) still flattens bpt/ept to ph; no sc/ec. */
+	private static void testPairedInlineFlagOffStillFlattensToPh(Path catalog) throws Exception {
+		String name = "pairedInline off still flattens to ph";
+		Path dir = Files.createTempDirectory("oxlf-mq-flat-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></source>
+					    <target>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, false);
+			String xml = Files.readString(x21);
+			assertFalse(name + ": unexpected <sc", xml.contains("<sc"));
+			assertFalse(name + ": unexpected <ec", xml.contains("<ec"));
+			assertContains(name, xml, "<ph");
+			assertContains(name, xml, "id=\"4\"");
+			assertContains(name, xml, "id=\"4e\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: unpaired bpt (no mate) stays a standalone ph — do not invent a mate. */
+	private static void testPairedInlineUnpairedStaysPh(Path catalog) throws Exception {
+		String name = "pairedInline unpaired bpt stays ph";
+		Path dir = Files.createTempDirectory("oxlf-mq-unpaired-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x</source>
+					    <target>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertFalse(name + ": unpaired bpt must not become sc", xml.contains("<sc"));
+			assertFalse(name + ": unpaired bpt must not become ec", xml.contains("<ec"));
+			assertContains(name, xml, "<ph");
+			assertContains(name, xml, "val=\"[B]\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Phase 2: Merge/FromOpenXliff restores bpt/ept with rid when pairing was on. */
+	private static void testPairedInlineMergeRestoresBptEptRid(Path catalog) throws Exception {
+		String name = "Merge restores bpt/ept + rid after pairedInline";
+		Path dir = Files.createTempDirectory("oxlf-mq-paired-merge-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source>A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></source>
+					    <target state="translated">A <bpt id="4" rid="4">&lt;mq:rxt displaytext="B" val="[B]"/&gt;</bpt>x<ept id="4" rid="4">&lt;mq:rxt displaytext="/B" val="[/B]"/&gt;</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertContains(name, out, "<bpt");
+			assertContains(name, out, "<ept");
+			assertContains(name, out, "rid=");
+			assertContains(name, out, "mq:rxt");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -351,6 +662,11 @@ public final class MqxliffConvertRoundTripTest {
 
 	private static Path convertToXliff21(Path source, Path dir, Path catalog, boolean includeNonTranslatable)
 			throws Exception {
+		return convertToXliff21(source, dir, catalog, includeNonTranslatable, false);
+	}
+
+	private static Path convertToXliff21(Path source, Path dir, Path catalog, boolean includeNonTranslatable,
+			boolean pairedInline) throws Exception {
 		Files.createDirectories(dir);
 		Path xliff12 = dir.resolve("open.xlf");
 		Path skeleton = dir.resolve("open.skl");
@@ -368,6 +684,9 @@ public final class MqxliffConvertRoundTripTest {
 		if (includeNonTranslatable) {
 			params.put("includeNonTranslatable", "yes");
 		}
+		if (pairedInline) {
+			params.put("pairedInline", "yes");
+		}
 		List<String> res = ToOpenXliff.run(params);
 		if (!Constants.SUCCESS.equals(res.get(0))) {
 			throw new IOException("ToOpenXliff failed: " + res);
@@ -377,6 +696,32 @@ public final class MqxliffConvertRoundTripTest {
 			throw new IOException("ToXliff2 failed: " + res);
 		}
 		return xliff21;
+	}
+
+	private static String firstAttr(String xml, String elementPrefix, String attr) {
+		int from = 0;
+		while (true) {
+			int tag = xml.indexOf(elementPrefix, from);
+			if (tag < 0) {
+				return null;
+			}
+			int end = xml.indexOf('>', tag);
+			if (end < 0) {
+				return null;
+			}
+			String head = xml.substring(tag, end);
+			Matcher m = Pattern.compile(attr + "=\"([^\"]*)\"").matcher(head);
+			if (m.find()) {
+				return m.group(1);
+			}
+			from = end + 1;
+		}
+	}
+
+	private static String dataContent(String xliff21, String id) {
+		Matcher m = Pattern.compile("<data\\s+id=\"" + Pattern.quote(id) + "\"[^>]*>(.*?)</data>", Pattern.DOTALL)
+				.matcher(xliff21);
+		return m.find() ? m.group(1) : null;
 	}
 
 	private static int countUnits(String xliff21) {
