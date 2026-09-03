@@ -48,6 +48,8 @@ public final class MqxliffConvertRoundTripTest {
 		testPairedInlineBxEx(catalog);
 		testPairedInlineFlagOffStillFlattensToPh(catalog);
 		testPairedInlineUnpairedStaysPh(catalog);
+		testCtypeBoldSameIdPairEmitsScEc(catalog);
+		testToXliff2PairsCtypeBptWithPlainEpt(catalog);
 		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
@@ -433,6 +435,73 @@ public final class MqxliffConvertRoundTripTest {
 			assertFalse(name + ": unpaired bpt must not become ec", xml.contains("<ec"));
 			assertContains(name, xml, "<ph");
 			assertContains(name, xml, "val=\"[B]\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** MemoQ bold pair: bpt has ctype, ept shares id and has only {} payload. */
+	private static void testCtypeBoldSameIdPairEmitsScEc(Path catalog) throws Exception {
+		String name = "ctype=bold same-id bpt/ept pair emits sc/ec";
+		Path dir = Files.createTempDirectory("oxlf-mq-ctype-bold-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			assertContains(name, xml, "startRef=");
+			assertFalse(name + ": closer must not stay a flattened ph",
+					xml.contains("<ph") && !xml.contains("<ec"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** ToXliff2 on a 1.2 intermediate that still has raw same-id bpt/ept (no rid on ept). */
+	private static void testToXliff2PairsCtypeBptWithPlainEpt(Path catalog) throws Exception {
+		String name = "ToXliff2 pairs ctype bpt with same-id ept";
+		Path dir = Files.createTempDirectory("oxlf-mq-toxliff2-ctype-");
+		try {
+			Path xliff12 = dir.resolve("open.xlf");
+			write(xliff12, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" xml:space="preserve">
+					    <source><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path xliff21 = dir.resolve("out.xlf");
+			List<String> res = ToXliff2.run(xliff12.toString(), xliff21.toString(), catalog.toString(), "2.1");
+			if (!Constants.SUCCESS.equals(res.get(0))) {
+				fail(name + ": ToXliff2 failed " + res);
+				return;
+			}
+			String xml = Files.readString(xliff21);
+			assertContains(name, xml, "<sc");
+			assertContains(name, xml, "<ec");
+			assertContains(name, xml, "startRef=");
 			pass(name);
 		} finally {
 			deleteRecursive(dir);

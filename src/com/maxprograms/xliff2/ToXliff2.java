@@ -710,7 +710,7 @@ public class ToXliff2 {
 			throw new SAXException(Messages.getString("ToXliff2.3"));
 		}
 		List<XMLNode> result = new ArrayList<>();
-		if (ToOpenXliff.isPairingMarker(e)) {
+		if (ToOpenXliff.isPairingMarker(e) || canPairViaOpenerMap(e, openerIds)) {
 			result.add(emitPairedScEc(e, openerIds));
 			return result;
 		}
@@ -874,14 +874,32 @@ public class ToXliff2 {
 			openerIds.put(id, id);
 		} else {
 			String startRef = !rid.isEmpty() ? rid : "";
-			if (!startRef.isEmpty()) {
-				String openerId = openerIds.get(startRef);
+			if (startRef.isEmpty()) {
+				startRef = id;
+			}
+			String openerId = !startRef.isEmpty() ? openerIds.get(startRef) : null;
+			if (openerId != null || openerIds.containsKey(startRef)) {
 				tag.setAttribute("startRef", openerId != null ? openerId : startRef);
+			} else if (!startRef.isEmpty() && !startRef.equals(id)) {
+				tag.setAttribute("startRef", startRef);
 			} else {
 				tag.setAttribute("isolated", "yes");
 			}
 		}
 		return tag;
+	}
+
+	/** Closer with the same id as a preceding opener (MemoQ same-id bpt/ept, no rid). */
+	private static boolean canPairViaOpenerMap(Element e, Map<String, String> openerIds) {
+		if (e == null || openerIds == null || openerIds.isEmpty() || !ToOpenXliff.isPairingCloser(e.getName())) {
+			return false;
+		}
+		String rid = e.getAttributeValue("rid", "");
+		if (!rid.isEmpty() && openerIds.containsKey(rid)) {
+			return true;
+		}
+		String id = e.getAttributeValue("id", "");
+		return !id.isEmpty() && openerIds.containsKey(id);
 	}
 
 	private static Element deepCopyElement(Element original) {
