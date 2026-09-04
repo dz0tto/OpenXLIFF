@@ -550,6 +550,10 @@ public class ToXliff2 {
 			if (existing != null) {
 				String oldPayload = existing.getText() != null ? existing.getText() : "";
 				if (oldPayload.equals(newPayload)) {
+					// Same payload: still refresh stored attrs so the target's original
+					// id/rid/ctype win over the source's when they differ.
+					storeAttributes(tagAttributes, tag, dataId);
+					storeOriginalName(tagAttributes, tag.getName(), dataId);
 					return;
 				}
 				Set<String> used = collectDataIds(originalData);
@@ -656,18 +660,17 @@ public class ToXliff2 {
 			return;
 		}
 		List<Attribute> atts = tag.getAttributes();
-		if (atts.size() > 1) {
-			Element group = findOrCreateAttrGroup(tagAttributes, id);
-			Iterator<Attribute> it = atts.iterator();
-			while (it.hasNext()) {
-				Attribute a = it.next();
-				if (!"id".equals(a.getName())) {
-					Element meta = new Element("mda:meta");
-					meta.setAttribute("type", a.getName());
-					meta.setText(a.getValue());
-					group.addContent(meta);
-				}
+		Element group = null;
+		Iterator<Attribute> it = atts.iterator();
+		while (it.hasNext()) {
+			Attribute a = it.next();
+			if ("id".equals(a.getName())) {
+				continue;
 			}
+			if (group == null) {
+				group = findOrCreateAttrGroup(tagAttributes, id);
+			}
+			upsertMeta(group, a.getName(), a.getValue());
 		}
 	}
 
@@ -677,9 +680,21 @@ public class ToXliff2 {
 			return;
 		}
 		Element group = findOrCreateAttrGroup(tagAttributes, id);
+		upsertMeta(group, ToOpenXliff.ORIGINAL_NAME_ATTR, name);
+	}
+
+	private static void upsertMeta(Element group, String type, String text) {
+		List<Element> metas = group.getChildren("mda:meta");
+		for (int i = 0; i < metas.size(); i++) {
+			Element meta = metas.get(i);
+			if (type.equals(meta.getAttributeValue("type"))) {
+				meta.setText(text);
+				return;
+			}
+		}
 		Element meta = new Element("mda:meta");
-		meta.setAttribute("type", "oxlf-original");
-		meta.setText(name);
+		meta.setAttribute("type", type);
+		meta.setText(text);
 		group.addContent(meta);
 	}
 
