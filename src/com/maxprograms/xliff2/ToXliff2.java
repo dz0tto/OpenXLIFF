@@ -700,18 +700,71 @@ public class ToXliff2 {
 		return group;
 	}
 
-	private static List<XMLNode> harvestContent(Element e, Element tagAttributes) throws SAXException, IOException {
-		return harvestContent(e, tagAttributes, new HashMap<>());
+	private static final class PairingState {
+		final List<String> openStack = new ArrayList<>();
+		final Set<String> emittedScIds = new HashSet<>();
+		final Set<String> usedStartRefs = new HashSet<>();
+		final Map<String, String> ridToOpener = new HashMap<>();
+
+		void emitOpener(String id, String rid) {
+			if (id == null || id.isEmpty()) {
+				return;
+			}
+			emittedScIds.add(id);
+			openStack.add(id);
+			if (rid != null && !rid.isEmpty()) {
+				ridToOpener.put(rid, id);
+			}
+		}
+
+		boolean isUnusedOpen(String id) {
+			return id != null && !id.isEmpty() && emittedScIds.contains(id) && !usedStartRefs.contains(id)
+					&& openStack.contains(id);
+		}
+
+		String innermostUnused() {
+			for (int i = openStack.size() - 1; i >= 0; i--) {
+				String id = openStack.get(i);
+				if (!usedStartRefs.contains(id)) {
+					return id;
+				}
+			}
+			return null;
+		}
+
+		void useStartRef(String startRef) {
+			if (startRef == null || startRef.isEmpty()) {
+				return;
+			}
+			usedStartRefs.add(startRef);
+			openStack.remove(startRef);
+		}
+
+		boolean isEmpty() {
+			return emittedScIds.isEmpty();
+		}
+
+		boolean knowsRid(String rid) {
+			return rid != null && !rid.isEmpty() && ridToOpener.containsKey(rid);
+		}
+
+		boolean knowsId(String id) {
+			return id != null && !id.isEmpty() && emittedScIds.contains(id);
+		}
 	}
 
-	private static List<XMLNode> harvestContent(Element e, Element tagAttributes, Map<String, String> openerIds)
+	private static List<XMLNode> harvestContent(Element e, Element tagAttributes) throws SAXException, IOException {
+		return harvestContent(e, tagAttributes, new PairingState());
+	}
+
+	private static List<XMLNode> harvestContent(Element e, Element tagAttributes, PairingState pairing)
 			throws SAXException, IOException {
 		if ("sub".equals(e.getName())) {
 			throw new SAXException(Messages.getString("ToXliff2.3"));
 		}
 		List<XMLNode> result = new ArrayList<>();
-		if (ToOpenXliff.isPairingMarker(e) || canPairViaOpenerMap(e, openerIds)) {
-			result.add(emitPairedScEc(e, openerIds));
+		if (ToOpenXliff.isPairingMarker(e) || canPairViaOpenerMap(e, pairing)) {
+			result.add(emitPairedScEc(e, pairing));
 			return result;
 		}
 		if ("ph".equals(e.getName())) {
@@ -800,7 +853,7 @@ public class ToXliff2 {
 					newContent.add(node);
 				}
 				if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
-					newContent.addAll(harvestContent((Element) node, tagAttributes, openerIds));
+					newContent.addAll(harvestContent((Element) node, tagAttributes, pairing));
 				}
 			}
 			mrk.setContent(newContent);
@@ -821,7 +874,7 @@ public class ToXliff2 {
 					newContent.add(node);
 				}
 				if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
-					newContent.addAll(harvestContent((Element) node, tagAttributes, openerIds));
+					newContent.addAll(harvestContent((Element) node, tagAttributes, pairing));
 				}
 			}
 			pc.setContent(newContent);
@@ -850,13 +903,13 @@ public class ToXliff2 {
 			}
 			if (node.getNodeType() == XMLNode.ELEMENT_NODE) {
 				Element tag = (Element) node;
-				result.addAll(harvestContent(tag, tagAttributes, openerIds));
+				result.addAll(harvestContent(tag, tagAttributes, pairing));
 			}
 		}
 		return result;
 	}
 
-	private static Element emitPairedScEc(Element e, Map<String, String> openerIds) {
+	private static Element emitPairedScEc(Element e, PairingState pairing) {
 		boolean opener = ToOpenXliff.isPairingOpener(e.getName());
 		String id = e.getAttributeValue("id");
 		String rid = e.getAttributeValue("rid", "");
@@ -868,62 +921,70 @@ public class ToXliff2 {
 			tag.setAttribute("equiv", equiv);
 		}
 		if (opener) {
-			if (!rid.isEmpty()) {
-				openerIds.put(rid, id);
-			}
-			openerIds.put(id, id);
+			pairing.emitOpener(id, rid);
 		} else {
-			String startRef = !rid.isEmpty() ? rid : "";
-			if (startRef.isEmpty()) {
-				startRef = id;
-			}
-			String fromCloserId = closerStartRefFromUniquifiedId(id, openerIds);
-			if (fromCloserId != null) {
-				tag.setAttribute("startRef", fromCloserId);
+			String startRef = pickCloserStartRef(id, rid, pairing);
+			if (startRef != null) {
+				pairing.useStartRef(startRef);
+				tag.setAttribute("startRef", startRef);
 			} else {
-				String openerId = !startRef.isEmpty() ? openerIds.get(startRef) : null;
-				if (openerId != null || openerIds.containsKey(startRef)) {
-					tag.setAttribute("startRef", openerId != null ? openerId : startRef);
-				} else if (!startRef.isEmpty() && !startRef.equals(id)) {
-					tag.setAttribute("startRef", startRef);
-				} else {
-					tag.setAttribute("isolated", "yes");
-				}
+				tag.setAttribute("isolated", "yes");
 			}
 		}
 		return tag;
 	}
 
 	/**
-	 * {@code uniqueInlineId} closers use {@code id+"e"} (e.g. {@code 1e}) while the opener
-	 * stayed {@code 1}. When rid still points at the wrong pair, recover startRef from that id.
+	 * Prefer the closer marker {@code rid} when it is an unused emitted {@code sc} id
+	 * (ToOpenXliff writes the opener unique id there). Then {@code Ne} → legacy rid
+	 * map → innermost still-open unused opener. A {@code startRef} is used once.
 	 */
-	private static String closerStartRefFromUniquifiedId(String closerId, Map<String, String> openerIds) {
-		if (closerId == null || closerId.length() < 2 || !closerId.endsWith("e") || openerIds == null) {
+	private static String pickCloserStartRef(String closerId, String rid, PairingState pairing) {
+		if (pairing != null && rid != null && !rid.isEmpty() && pairing.isUnusedOpen(rid)) {
+			return rid;
+		}
+		String fromNe = uniquifiedCloserBase(closerId);
+		if (pairing != null && pairing.isUnusedOpen(fromNe)) {
+			return fromNe;
+		}
+		if (pairing != null && rid != null && !rid.isEmpty()) {
+			String mapped = pairing.ridToOpener.get(rid);
+			if (pairing.isUnusedOpen(mapped)) {
+				return mapped;
+			}
+		}
+		if (pairing != null) {
+			String inner = pairing.innermostUnused();
+			if (inner != null) {
+				return inner;
+			}
+		}
+		if (rid != null && !rid.isEmpty() && !rid.equals(closerId)) {
+			return rid;
+		}
+		return null;
+	}
+
+	/** {@code uniqueInlineId} closers use {@code id+"e"} (e.g. {@code 1e}). */
+	private static String uniquifiedCloserBase(String closerId) {
+		if (closerId == null || closerId.length() < 2 || !closerId.endsWith("e")) {
 			return null;
 		}
 		String base = closerId.substring(0, closerId.length() - 1);
-		if (!base.matches("\\d+")) {
-			return null;
-		}
-		String openerId = openerIds.get(base);
-		if (openerId != null) {
-			return openerId;
-		}
-		return openerIds.containsKey(base) ? base : null;
+		return base.matches("\\d+") ? base : null;
 	}
 
 	/** Closer with the same id as a preceding opener (MemoQ same-id bpt/ept, no rid). */
-	private static boolean canPairViaOpenerMap(Element e, Map<String, String> openerIds) {
-		if (e == null || openerIds == null || openerIds.isEmpty() || !ToOpenXliff.isPairingCloser(e.getName())) {
+	private static boolean canPairViaOpenerMap(Element e, PairingState pairing) {
+		if (e == null || pairing == null || pairing.isEmpty() || !ToOpenXliff.isPairingCloser(e.getName())) {
 			return false;
 		}
 		String rid = e.getAttributeValue("rid", "");
-		if (!rid.isEmpty() && openerIds.containsKey(rid)) {
+		if (pairing.knowsRid(rid) || pairing.isUnusedOpen(rid)) {
 			return true;
 		}
 		String id = e.getAttributeValue("id", "");
-		return !id.isEmpty() && openerIds.containsKey(id);
+		return pairing.knowsId(id);
 	}
 
 	private static Element deepCopyElement(Element original) {
