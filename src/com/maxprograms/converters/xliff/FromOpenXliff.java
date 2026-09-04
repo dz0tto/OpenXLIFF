@@ -285,6 +285,9 @@ public class FromOpenXliff {
         List<Attribute> atts = e.getAttributes();
         for (int i = 0; i < atts.size(); i++) {
             Attribute a = atts.get(i);
+            if (a.getName().startsWith("oxlf-")) {
+                continue;
+            }
             appendAttr(sb, a.getName(), a.getValue());
         }
         sb.append('>');

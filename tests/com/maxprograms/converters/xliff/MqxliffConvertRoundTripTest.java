@@ -53,6 +53,7 @@ public final class MqxliffConvertRoundTripTest {
 		testCtypeBoldSameIdPairEmitsScEc(catalog);
 		testToXliff2PairsCtypeBptWithPlainEpt(catalog);
 		testMergeKeepsCtypeBoldPairOnTarget(catalog);
+		testMergeRestoresOriginalCtypeBoldNotPairingIds(catalog);
 		testMergeKeepsNonMqPhPayloadOnTarget(catalog);
 		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
@@ -552,6 +553,57 @@ public final class MqxliffConvertRoundTripTest {
 			String target = out.substring(targetAt, targetEnd);
 			assertContains(name + " target bpt", target, "<bpt");
 			assertContains(name + " target ept", target, "<ept");
+			assertContains(name + " target ctype", target, "ctype=\"bold\"");
+			assertContains(name + " target original bpt id", target, "id=\"1\"");
+			assertFalse(name + ": target closer must not keep pairing id 1e", target.contains("id=\"1e\""));
+			assertFalse(name + ": target must not keep pairing rid", target.contains("rid="));
+			assertContains(name + " original bpt payload", target, "<bpt ctype=\"bold\" id=\"1\">{}</bpt>");
+			assertContains(name + " original ept payload", target, "<ept id=\"1\">{}</ept>");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Convert-back must restore the original MemoQ bold pair, not the pairing rewrite
+	 * ({@code rid} + closer {@code id="1e"}).
+	 */
+	private static void testMergeRestoresOriginalCtypeBoldNotPairingIds(Path catalog) throws Exception {
+		String name = "Merge restores original ctype=bold pair, not pairing ids";
+		Path dir = Files.createTempDirectory("oxlf-mq-merge-orig-bold-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source mq:segpart="1" xml:space="preserve"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></source>
+					    <target xml:space="preserve" state="translated"><bpt ctype="bold" id="1">{}</bpt>Steam Title (80 symbols max):<ept id="1">{}</ept></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			if (targetAt < 0 || targetEnd < 0) {
+				fail(name + ": no target in " + out);
+				return;
+			}
+			String target = out.substring(targetAt, targetEnd + "</target>".length());
+			assertContains(name + " target", target,
+					"<bpt ctype=\"bold\" id=\"1\">{}</bpt>Steam Title (80 symbols max):<ept id=\"1\">{}</ept>");
+			assertFalse(name + ": must not leave pairing closer id 1e", target.contains("id=\"1e\""));
+			assertFalse(name + ": must not leave pairing rid on target tags", target.contains("rid="));
+			assertFalse(name + ": must not leak oxlf stash attrs", target.contains("oxlf-"));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -758,6 +810,15 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name, out, "<ept");
 			assertContains(name, out, "rid=");
 			assertContains(name, out, "mq:rxt");
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " target bpt id", target, "id=\"4\"");
+			assertContains(name + " target rid", target, "rid=\"4\"");
+			assertContains(name + " target mq:rxt open", target, "val=\"[B]\"");
+			assertContains(name + " target mq:rxt close", target, "val=\"[/B]\"");
+			assertFalse(name + ": target closer must not keep pairing id 4e", target.contains("id=\"4e\""));
+			assertFalse(name + ": target must not leak oxlf stash attrs", target.contains("oxlf-"));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);

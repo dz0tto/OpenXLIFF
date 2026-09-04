@@ -94,6 +94,13 @@ public class ToOpenXliff {
         return isLevshaStyleInline(e) || isMemoQPayloadInline(e);
     }
 
+    /** Original 1.2 {@code id} before {@code uniqueInlineId} (closer {@code 1} → {@code 1e}). */
+    public static final String ORIG_ID_ATTR = "oxlf-orig-id";
+    /** Original 1.2 {@code rid} when the source had one. Absent means the pair had no rid. */
+    public static final String ORIG_RID_ATTR = "oxlf-orig-rid";
+    /** Persist the 1.2 element name so FromXliff2 can restore {@code bpt}/{@code ept}/{@code bx}/{@code ex}. */
+    public static final String ORIGINAL_NAME_ATTR = "oxlf-original";
+
     /** XLIFF 1.2 pairing tags that can become {@code sc}/{@code ec} when {@code pairedInline} is on. */
     public static boolean isPairingName(String name) {
         return "bpt".equals(name) || "ept".equals(name) || "bx".equals(name) || "ex".equals(name);
@@ -1137,6 +1144,8 @@ public class ToOpenXliff {
         }
         String uniqueId = uniqueInlineId(origId, usedIds);
         marker.setAttribute("id", uniqueId);
+        rememberOriginalPairingIdentity(e, marker, origId);
+        copyOriginalPairingAttrs(e, marker);
         String pairId = pairingPairId(e);
         if (pairId.isEmpty()) {
             pairId = uniqueId;
@@ -1155,6 +1164,38 @@ public class ToOpenXliff {
             marker.setText(e.getText());
         }
         return marker;
+    }
+
+    /**
+     * Stash the MemoQ/original identity so Merge/FromXliff2 can put {@code ctype},
+     * the original {@code id} (not {@code 1e}), and the original {@code rid} (or
+     * none) back on the created target.
+     */
+    private static void rememberOriginalPairingIdentity(Element from, Element marker, String fallbackId) {
+        String rawId = from.getAttributeValue("id", "");
+        if (rawId.isEmpty() && fallbackId != null) {
+            rawId = fallbackId;
+        }
+        if (!rawId.isEmpty()) {
+            marker.setAttribute(ORIG_ID_ATTR, rawId);
+        }
+        String rawRid = from.getAttributeValue("rid", "");
+        if (!rawRid.isEmpty()) {
+            marker.setAttribute(ORIG_RID_ATTR, rawRid);
+        }
+    }
+
+    /** Copy original pairing attributes such as {@code ctype}, skipping id/rid and our stash keys. */
+    private static void copyOriginalPairingAttrs(Element from, Element to) {
+        List<Attribute> atts = from.getAttributes();
+        for (int i = 0; i < atts.size(); i++) {
+            Attribute a = atts.get(i);
+            String n = a.getName();
+            if ("id".equals(n) || "rid".equals(n) || n.startsWith("oxlf-")) {
+                continue;
+            }
+            to.setAttribute(n, a.getValue());
+        }
     }
 
     /** Copy translate=no / ts=locked so ToXliff2 can emit editor lock state. */

@@ -743,9 +743,8 @@ public class FromXliff2 {
 			String id = tag.getAttributeValue("id");
 			String attrKey = !dataRef.isEmpty() ? dataRef : id;
 			result = new Element(originalInlineName(attributes, attrKey, "bpt"));
-			result.setAttribute("id", id);
-			result.setAttribute("rid", id);
 			applyStoredAttributes(result, attributes, attrKey);
+			restoreOriginalPairingIdentity(result, attributes, attrKey, id, id);
 			if (tags.containsKey(dataRef)) {
 				result.addContent(tags.get(dataRef));
 			}
@@ -756,11 +755,9 @@ public class FromXliff2 {
 			String startRef = tag.getAttributeValue("startRef");
 			String attrKey = !dataRef.isEmpty() ? dataRef : id;
 			result = new Element(originalInlineName(attributes, attrKey, "ept"));
-			result.setAttribute("id", id);
-			if (!startRef.isEmpty()) {
-				result.setAttribute("rid", startRef);
-			}
 			applyStoredAttributes(result, attributes, attrKey);
+			restoreOriginalPairingIdentity(result, attributes, attrKey, id,
+					!startRef.isEmpty() ? startRef : id);
 			if (tags.containsKey(dataRef)) {
 				result.addContent(tags.get(dataRef));
 			}
@@ -788,7 +785,7 @@ public class FromXliff2 {
 			List<String[]> list = attributes.get(attrKey);
 			for (int i = 0; i < list.size(); i++) {
 				String[] pair = list.get(i);
-				if ("oxlf-original".equals(pair[0]) && ToOpenXliff.isPairingName(pair[1])) {
+				if (ToOpenXliff.ORIGINAL_NAME_ATTR.equals(pair[0]) && ToOpenXliff.isPairingName(pair[1])) {
 					return pair[1];
 				}
 			}
@@ -803,10 +800,53 @@ public class FromXliff2 {
 		List<String[]> list = attributes.get(attrKey);
 		for (int i = 0; i < list.size(); i++) {
 			String[] pair = list.get(i);
-			if ("oxlf-original".equals(pair[0]) || "equiv-text".equals(pair[0]) || "equiv".equals(pair[0])) {
+			if (skipStoredAttribute(pair[0])) {
 				continue;
 			}
 			result.setAttribute(pair[0], pair[1]);
 		}
+	}
+
+	private static boolean skipStoredAttribute(String type) {
+		return ToOpenXliff.ORIGINAL_NAME_ATTR.equals(type) || ToOpenXliff.ORIG_ID_ATTR.equals(type)
+				|| ToOpenXliff.ORIG_RID_ATTR.equals(type) || "equiv-text".equals(type) || "equiv".equals(type)
+				|| "rid".equals(type);
+	}
+
+	/**
+	 * Prefer the original 1.2 id/rid stashed by ToOpenXliff. Pairing rewrites the
+	 * closer to {@code 1e} and always sets {@code rid}; Merge must not keep those.
+	 */
+	private static void restoreOriginalPairingIdentity(Element result, Map<String, List<String[]>> attributes,
+			String attrKey, String fallbackId, String pairingRid) {
+		String origId = storedMeta(attributes, attrKey, ToOpenXliff.ORIG_ID_ATTR);
+		if (origId != null && !origId.isEmpty()) {
+			result.setAttribute("id", origId);
+			String origRid = storedMeta(attributes, attrKey, ToOpenXliff.ORIG_RID_ATTR);
+			if (origRid != null && !origRid.isEmpty()) {
+				result.setAttribute("rid", origRid);
+			} else {
+				result.removeAttribute("rid");
+			}
+			return;
+		}
+		result.setAttribute("id", fallbackId);
+		if (pairingRid != null && !pairingRid.isEmpty()) {
+			result.setAttribute("rid", pairingRid);
+		}
+	}
+
+	private static String storedMeta(Map<String, List<String[]>> attributes, String attrKey, String type) {
+		if (attributes == null || attrKey == null || type == null || !attributes.containsKey(attrKey)) {
+			return null;
+		}
+		List<String[]> list = attributes.get(attrKey);
+		for (int i = 0; i < list.size(); i++) {
+			String[] pair = list.get(i);
+			if (type.equals(pair[0])) {
+				return pair[1];
+			}
+		}
+		return null;
 	}
 }
