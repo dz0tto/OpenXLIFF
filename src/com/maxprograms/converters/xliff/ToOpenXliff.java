@@ -326,8 +326,20 @@ public class ToOpenXliff {
         }
         ph.setText(payload);
         if (!equiv.isEmpty()) {
-            ph.setAttribute("equiv-text", equiv);
+            ph.setAttribute("equiv-text", escapeNewlinesForXmlAttr(equiv));
         }
+    }
+
+    /**
+     * Raw CR/LF cannot live in XML attributes (attribute-value normalization turns
+     * them into spaces). MemoQ {@code mq:ch val} line breaks become a two-char
+     * {@code \n} hint, matching Swordfish / web tag titles.
+     */
+    public static String escapeNewlinesForXmlAttr(String text) {
+        if (text == null || text.isEmpty()) {
+            return text == null ? "" : text;
+        }
+        return text.replace("\r\n", "\\r\\n").replace("\r", "\\r").replace("\n", "\\n");
     }
 
     private static String extractPayloadHint(String payload) {

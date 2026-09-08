@@ -790,7 +790,7 @@ public class ToXliff2 {
 				ph.setAttribute("dataRef", rawId);
 				String equiv = extractEquivText(e);
 				if (equiv != null && !equiv.isEmpty()) {
-					ph.setAttribute("equiv", equiv);
+					ph.setAttribute("equiv", ToOpenXliff.escapeNewlinesForXmlAttr(equiv));
 				}
 			} else {
 				ph.setAttribute("id", "ph" + rawId);
@@ -904,7 +904,7 @@ public class ToXliff2 {
 			ph.setAttribute("dataRef", id);
 			String equiv = e.getAttributeValue("equiv-text");
 			if (equiv != null && !equiv.isEmpty()) {
-				ph.setAttribute("equiv", equiv);
+				ph.setAttribute("equiv", ToOpenXliff.escapeNewlinesForXmlAttr(equiv));
 			}
 			result.add(ph);
 			return result;
@@ -933,7 +933,7 @@ public class ToXliff2 {
 		tag.setAttribute("dataRef", id);
 		String equiv = extractEquivText(e);
 		if (equiv != null && !equiv.isEmpty()) {
-			tag.setAttribute("equiv", equiv);
+			tag.setAttribute("equiv", ToOpenXliff.escapeNewlinesForXmlAttr(equiv));
 		}
 		if (opener) {
 			pairing.emitOpener(id, rid);

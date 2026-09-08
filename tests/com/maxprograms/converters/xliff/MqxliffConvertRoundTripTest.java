@@ -44,6 +44,7 @@ public final class MqxliffConvertRoundTripTest {
 		testKeepsLockedAndTagOnlyUnits(catalog);
 		testMergeRestoresPhPayloadsWithoutUnboundMq(catalog);
 		testMqChKeepsMemoQId(catalog);
+		testMqChNewlineValEscapesEquiv(catalog);
 		testSameIdBptEptBothPayloadsSurvive(catalog);
 		testPairedInlineEmitsScEcWithStartRef(catalog);
 		testPairedInlineOverlappingPairs(catalog);
@@ -221,6 +222,46 @@ public final class MqxliffConvertRoundTripTest {
 				fail(name + ": expected equiv/val space on mq:ch, xml=" + xml);
 			}
 			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Excel CHAR(10) as mq:ch val with a real newline must not become a space in equiv. */
+	private static void testMqChNewlineValEscapesEquiv(Path catalog) throws Exception {
+		String name = "mq:ch newline val escapes equiv (not XML-normalized to space)";
+		Path dir = Files.createTempDirectory("oxlf-mq-ch-nl-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1">
+					    <source xml:space="preserve">Hello<ph id="1">MQCH</ph>world</source>
+					    <target xml:space="preserve">Hallo<ph id="1">MQCH</ph>Welt</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""".replace("MQCH", "&lt;mq:ch val=&quot;\n&quot; /&gt;"));
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			String data1 = dataContent(xml, "1");
+			if (data1 == null) {
+				fail(name + ": missing <data id=\"1\">");
+				return;
+			}
+			assertContains(name + " data", data1, "mq:ch");
+			assertFalse(name + ": equiv attribute must not contain a raw newline",
+					xml.contains("equiv=\"\n") || xml.contains("equiv-text=\"\n"));
+			boolean escaped = xml.contains("equiv=\"\\n\"") || xml.contains("equiv-text=\"\\n\"");
+			if (!escaped) {
+				fail(name + ": expected escaped \\\\n equiv, xml=" + xml);
+			} else {
+				pass(name);
+			}
 		} finally {
 			deleteRecursive(dir);
 		}
