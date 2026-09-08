@@ -113,5 +113,7 @@
             <arg value="${basedir}/srx/default.srx" />
             <arg value="${basedir}/srx/newlines-only.srx" />
         </java>
+        <java classname="com.maxprograms.converters.msoffice.MSOfficeKeepSegmentsTest"
+              classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true" />
     </target>
 </project>

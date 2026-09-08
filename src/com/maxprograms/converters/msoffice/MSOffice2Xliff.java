@@ -143,7 +143,10 @@ public class MSOffice2Xliff {
 		String start = "";
 		String end = "";
 		List<Element> tags = source.getChildren("ph");
-		if (tags.size() == 1) {
+		// Only peel edge tags into skeleton when the remaining middle still has visible
+		// content (text — including digits — or other tags). Tags-only / digits-only runs
+		// must stay as segments so they appear in the TMS project.
+		if (tags.size() == 1 && content.size() > 1) {
 			if (content.get(0).getNodeType() == XMLNode.ELEMENT_NODE) {
 				Element e = tags.get(0);
 				start = e.getText();
@@ -155,28 +158,30 @@ public class MSOffice2Xliff {
 				content.remove(content.size() - 1);
 				source.setContent(content);
 			}
-		} else if (tags.size() > 1 && content.get(0).getNodeType() == XMLNode.ELEMENT_NODE
+		} else if (tags.size() > 1 && content.size() > 2 && content.get(0).getNodeType() == XMLNode.ELEMENT_NODE
 				&& content.get(content.size() - 1).getNodeType() == XMLNode.ELEMENT_NODE) {
-			// check if it is possible to send
-			// initial and trailing tag to skeleton
 			Element first = (Element) content.get(0);
 			Element last = (Element) content.get(content.size() - 1);
 			String test = first.getText() + last.getText();
 			if (checkPairs(test)) {
-				start = first.getText();
-				end = last.getText();
 				List<XMLNode> newContent = new ArrayList<>();
 				for (int i = 1; i < content.size() - 1; i++) {
 					newContent.add(content.get(i));
 				}
-				source.setContent(newContent);
+				Element middle = new Element("source");
+				middle.setContent(new ArrayList<>(newContent));
+				if (hasVisibleSegmentContent(middle)) {
+					start = first.getText();
+					end = last.getText();
+					source.setContent(newContent);
+				}
 			}
 		}
 
 		writeSkel(replaceText(start, "\uE0FF", "&quot;"));
 		List<Element> remainingPhs = source.getChildren("ph");
-		// Keep tag-only cells/runs as segments so they appear in editors.
-		if (containsText(source) || !remainingPhs.isEmpty()) {
+		// Keep tag-only and digits-only cells/runs as segments so they appear in editors.
+		if (hasVisibleSegmentContent(source)) {
 			List<Element> phs = remainingPhs;
 			for (int i = 0; i < phs.size(); i++) {
 				phs.get(i).setAttribute("id", "" + (i + 1));
@@ -231,18 +236,27 @@ public class MSOffice2Xliff {
 		return stack.isEmpty();
 	}
 
-	private static boolean containsText(Element source) {
+	/**
+	 * True when the source should become a visible CAT segment: non-whitespace text
+	 * (including digits-only / currency / percentages) or remaining inline {@code ph} tags.
+	 */
+	static boolean hasVisibleSegmentContent(Element source) {
+		return containsText(source) || !source.getChildren("ph").isEmpty();
+	}
+
+	/**
+	 * True when source has non-whitespace text. Digits-only runs are kept (they used to be
+	 * classified as empty and sent to skeleton).
+	 */
+	static boolean containsText(Element source) {
 		List<XMLNode> content = source.getContent();
-		String string = "";
+		StringBuilder string = new StringBuilder();
 		Iterator<XMLNode> it = content.iterator();
 		while (it.hasNext()) {
 			XMLNode n = it.next();
 			if (n.getNodeType() == XMLNode.TEXT_NODE) {
-				string = string + ((TextNode) n).getText();
+				string.append(((TextNode) n).getText());
 			}
-		}
-		if (isNumeric(string.trim())) {
-			return false;
 		}
 		for (int i = 0; i < string.length(); i++) {
 			char c = string.charAt(i);
@@ -251,10 +265,6 @@ public class MSOffice2Xliff {
 			}
 		}
 		return false;
-	}
-
-	private static boolean isNumeric(String string) {
-		return string.matches("[$\u20AC\u00A3]?[\\s]?[\\-]?(\\d+[\\.,]?(\\d+)?)+[\\s]?[%\u20AC]?");
 	}
 
 	private static void writeOut(String string) throws IOException {
