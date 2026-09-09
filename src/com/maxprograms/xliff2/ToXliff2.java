@@ -93,6 +93,20 @@ public class ToXliff2 {
 		return extractEquivTextFromMarkup(ph.getText());
 	}
 
+	/** XLIFF 2.0 {@code ph/@type} is the counterpart of 1.2 {@code x/@ctype} / {@code ph/@type}. */
+	private static void copyCtypeToType(Element from, Element ph) {
+		if (from == null || ph == null) {
+			return;
+		}
+		String type = from.getAttributeValue("type", "");
+		if (type.isEmpty()) {
+			type = from.getAttributeValue("ctype", "");
+		}
+		if (!type.isEmpty()) {
+			ph.setAttribute("type", type);
+		}
+	}
+
 	private static String extractEquivTextFromMarkup(String markup) {
 		if (markup == null) {
 			return null;
@@ -792,6 +806,7 @@ public class ToXliff2 {
 				if (equiv != null && !equiv.isEmpty()) {
 					ph.setAttribute("equiv", ToOpenXliff.escapeNewlinesForXmlAttr(equiv));
 				}
+				copyCtypeToType(e, ph);
 			} else {
 				ph.setAttribute("id", "ph" + rawId);
 			}
@@ -906,6 +921,7 @@ public class ToXliff2 {
 			if (equiv != null && !equiv.isEmpty()) {
 				ph.setAttribute("equiv", ToOpenXliff.escapeNewlinesForXmlAttr(equiv));
 			}
+			copyCtypeToType(e, ph);
 			result.add(ph);
 			return result;
 		}
