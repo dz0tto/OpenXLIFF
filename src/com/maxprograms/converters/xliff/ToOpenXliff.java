@@ -328,6 +328,21 @@ public class ToOpenXliff {
         if (!equiv.isEmpty()) {
             ph.setAttribute("equiv-text", escapeNewlinesForXmlAttr(equiv));
         }
+        copyCtypeAttr(ph, e);
+    }
+
+    /** XLIFF 1.2 {@code ph} uses {@code ctype}; keep it so ToXliff2 can set {@code type}. */
+    private static void copyCtypeAttr(Element dest, Element from) {
+        if (dest == null || from == null) {
+            return;
+        }
+        String type = from.getAttributeValue("type", "");
+        if (type.isEmpty()) {
+            type = from.getAttributeValue("ctype", "");
+        }
+        if (!type.isEmpty()) {
+            dest.setAttribute("ctype", type);
+        }
     }
 
     /**
@@ -932,11 +947,14 @@ public class ToOpenXliff {
                             unit.setAttribute("id", "" + units.size());
                             unit.setAttribute("approved", root.getAttributeValue("approved", "no"));
                             copyLockSignals(root, unit);
-                            boolean space = root.getAttributeValue("xml:space").equals("preserve");
+                            boolean space = hasPreserveSpace(root) || hasPreserveSpace(e);
                             if (space) {
                                 unit.setAttribute("xml:space", "preserve");
                             }
                             Element source = new Element("source");
+                            if (space) {
+                                source.setAttribute("xml:space", "preserve");
+                            }
                             resetInlineIds();
                             source.setContent(getContent1x(e));
                             if (!hasTranslatableText(source)) {
@@ -969,20 +987,27 @@ public class ToOpenXliff {
                 unit.setAttribute("id", "" + units.size());
                 unit.setAttribute("approved", root.getAttributeValue("approved", "no"));
                 copyLockSignals(root, unit);
-                boolean space = root.getAttributeValue("xml:space").equals("preserve");
-                if (space || preserveSpaces) {
+                Element srcEl = root.getChild("source");
+                boolean space = hasPreserveSpace(root) || hasPreserveSpace(srcEl) || preserveSpaces;
+                if (space) {
                     unit.setAttribute("xml:space", "preserve");
                 }
 
                 Element source = new Element("source");
+                if (space) {
+                    source.setAttribute("xml:space", "preserve");
+                }
                 resetInlineIds();
-                source.setContent(getContent1x(root.getChild("source")));
+                source.setContent(getContent1x(srcEl));
                 if (!hasTranslatableText(source)) {
                     // Skip this trans-unit; recurse1x is invoked per element so siblings still run.
                     return;
                 }
                 unit.addContent(source);
                 Element target = new Element("target");
+                if (space) {
+                    target.setAttribute("xml:space", "preserve");
+                }
                 resetInlineIds();
                 target.setContent(getContent1x(root.getChild("target")));
                 unit.addContent(target);
@@ -1027,6 +1052,10 @@ public class ToOpenXliff {
         while (it.hasNext()) {
             recurse1x(it.next(), units, idAttribute, charlimAttribute, contextAttribute);
         }
+    }
+
+    private static boolean hasPreserveSpace(Element e) {
+        return e != null && "preserve".equals(e.getAttributeValue("xml:space", ""));
     }
 
     private static boolean hasTranslatableText(Element e) {
