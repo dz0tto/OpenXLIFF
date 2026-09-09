@@ -457,7 +457,7 @@ public class ToXliff2 {
 				segment.setAttribute("state", "final");
 			}
 			Element src2 = new Element("source");
-			if (source.getAttributeValue("xml:space", "default").equals("preserve")) {
+			if (hasPreserveSpace(source) || hasPreserveSpace(src)) {
 				src2.setAttribute("xml:space", "preserve");
 			}
 			mrkCount = 1;
@@ -485,7 +485,7 @@ public class ToXliff2 {
 			}
 			harvestInline(originalData, tagAttributes, tgt);
 			Element tgt2 = new Element("target");
-			if ("preserve".equals(source.getAttributeValue("xml:space"))) {
+			if (hasPreserveSpace(source) || hasPreserveSpace(tgt)) {
 				tgt2.setAttribute("xml:space", "preserve");
 			}
 			mrkCount = 1;
@@ -559,7 +559,8 @@ public class ToXliff2 {
 		if ("ph".equals(tag.getName()) || ToOpenXliff.isPairingMarker(tag)) {
 			boolean levshaStyle = ToOpenXliff.isPairingMarker(tag) || isLevshaStylePh(tag);
 			String dataId = levshaStyle ? tag.getAttributeValue("id") : "ph" + tag.getAttributeValue("id");
-			String newPayload = tag.getText() != null ? tag.getText() : "";
+			String newPayload = levshaStyle ? levshaOriginalDataText(tag)
+					: (tag.getText() != null ? tag.getText() : "");
 			Element existing = findData(originalData, dataId);
 			if (existing != null) {
 				String oldPayload = existing.getText() != null ? existing.getText() : "";
@@ -582,7 +583,7 @@ public class ToXliff2 {
 			Element data = new Element("data");
 			data.setAttribute("id", dataId);
 			if (levshaStyle) {
-				data.setText(tag.getText());
+				data.setText(levshaOriginalDataText(tag));
 			} else {
 				data.setContent(tag.getContent());
 			}
@@ -641,6 +642,20 @@ public class ToXliff2 {
 		while (it.hasNext()) {
 			harvestInline(originalData, tagAttributes, it.next());
 		}
+	}
+
+	/** Empty Levsha {@code <x/>} / {@code <ph/>} store the serialized tag so {@code ctype} survives. */
+	private static String levshaOriginalDataText(Element tag) {
+		String text = tag.getText();
+		if (text != null && !text.isEmpty()) {
+			return text;
+		}
+		String serialized = tag.toString();
+		return serialized != null ? serialized : "";
+	}
+
+	private static boolean hasPreserveSpace(Element e) {
+		return e != null && "preserve".equals(e.getAttributeValue("xml:space", ""));
 	}
 
 	private static boolean containsTag(Element originalData, String id) {

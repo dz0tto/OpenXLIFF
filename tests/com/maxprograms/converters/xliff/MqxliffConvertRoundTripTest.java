@@ -58,6 +58,7 @@ public final class MqxliffConvertRoundTripTest {
 		testMergeKeepsNonMqPhPayloadOnTarget(catalog);
 		testPairedInlineMergeRestoresBptEptRid(catalog);
 		testLevshaEmptyPlaceholderStillWorks(catalog);
+		testExcelLfCtypeSurvivesToXliff2(catalog);
 		testApprovedFinalSurvivesEmptyTargetHarvest(catalog);
 		testApprovedWithoutTargetStaysInitial(catalog);
 		testNoContextGroupWithoutIdAttribute(catalog);
@@ -716,9 +717,7 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name, xml, "startRef=\"1\"");
 			assertContains(name, xml, "startRef=\"2\"");
 			assertContains(name, xml, "startRef=\"3\"");
-			int sourceAt = xml.indexOf("<source>");
-			int sourceEnd = xml.indexOf("</source>", sourceAt);
-			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : xml;
+			String source = firstElementInner(xml, "source");
 			assertEquals(name + " one ec per startRef=3 in source", 1,
 					countOccurrences(source, "startRef=\"3\""));
 			assertEquals(name + " one ec per startRef=1 in source", 1,
@@ -756,9 +755,7 @@ public final class MqxliffConvertRoundTripTest {
 					""");
 			Path x21 = convertToXliff21(src, dir, catalog, true, true);
 			String xml = Files.readString(x21);
-			int sourceAt = xml.indexOf("<source>");
-			int sourceEnd = xml.indexOf("</source>", sourceAt);
-			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : xml;
+			String source = firstElementInner(xml, "source");
 			assertEquals(name + " sc count in source", 3, countOccurrences(source, "<sc"));
 			assertEquals(name + " ec count in source", 3, countOccurrences(source, "<ec"));
 			assertEquals(name + " one startRef=3", 1, countOccurrences(source, "startRef=\"3\""));
@@ -803,12 +800,8 @@ public final class MqxliffConvertRoundTripTest {
 			Path x21 = convertToXliff21(src, dir, catalog, true, true);
 			String xml = Files.readString(x21);
 			assertNoDuplicateStartRefs(name, xml);
-			int sourceAt = xml.indexOf("<source>");
-			int sourceEnd = xml.indexOf("</source>", sourceAt);
-			String source = sourceAt >= 0 && sourceEnd > sourceAt ? xml.substring(sourceAt, sourceEnd) : "";
-			int targetAt = xml.indexOf("<target>");
-			int targetEnd = xml.indexOf("</target>", targetAt);
-			String target = targetAt >= 0 && targetEnd > targetAt ? xml.substring(targetAt, targetEnd) : "";
+			String source = firstElementInner(xml, "source");
+			String target = firstElementInner(xml, "target");
 			assertEquals(name + " source startRefs", "3,2,1", startRefsInOrder(source));
 			assertEquals(name + " target startRefs", "3,2,1", startRefsInOrder(target));
 			int oneE = source.indexOf("id=\"1e\"");
@@ -889,6 +882,45 @@ public final class MqxliffConvertRoundTripTest {
 			String xml = Files.readString(x21);
 			assertContains(name, xml, "equiv=\"{0}\"");
 			assertContains(name, xml, "dataRef=\"1\"");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Excel Alt+Enter placeholder must keep ctype→type and xml:space=preserve. */
+	private static void testExcelLfCtypeSurvivesToXliff2(Path catalog) throws Exception {
+		String name = "Excel LF ctype survives Convert+ToXliff2";
+		Path dir = Files.createTempDirectory("oxlf-excel-lf-");
+		try {
+			Path src = dir.resolve("in.lxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="ru" datatype="x-excel" original="t.xlsx">
+					  <body>
+					   <trans-unit id="1">
+					    <source xml:space="preserve"><x id="x1" ctype="x-regexp-tag-{g}" equiv-text="{g}"/><x id="x2" ctype="x-regexp-tag-{/g}" equiv-text="{/g}"/><x id="x4" ctype="x-excel-lf" equiv-text="&#10;"/><x id="x3" ctype="x-regexp-tag-{0}" equiv-text="{0}"/></source>
+					    <target xml:space="preserve"></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, true);
+			String xml = Files.readString(x21);
+			assertContains(name, xml, "type=\"x-excel-lf\"");
+			assertContains(name, xml, "xml:space=\"preserve\"");
+			assertContains(name, xml, "x-excel-lf");
+			int sourceAt = xml.indexOf("<source");
+			int sourceEnd = xml.indexOf("</source>", sourceAt);
+			if (sourceAt < 0 || sourceEnd < 0) {
+				fail(name + ": missing source");
+			} else {
+				String source = xml.substring(sourceAt, sourceEnd);
+				assertEquals(name + " live ph count", 4, countOccurrences(source, "<ph"));
+				assertContains(name, source, "type=\"x-excel-lf\"");
+			}
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
@@ -1074,6 +1106,26 @@ public final class MqxliffConvertRoundTripTest {
 				}
 			}
 		}
+	}
+
+	private static String firstElementInner(String xml, String name) {
+		if (xml == null) {
+			return "";
+		}
+		String open = "<" + name;
+		int tag = xml.indexOf(open);
+		if (tag < 0) {
+			return "";
+		}
+		int gt = xml.indexOf('>', tag);
+		if (gt < 0) {
+			return "";
+		}
+		int close = xml.indexOf("</" + name + ">", gt);
+		if (close < 0) {
+			return "";
+		}
+		return xml.substring(gt + 1, close);
 	}
 
 	private static int countOccurrences(String haystack, String needle) {
