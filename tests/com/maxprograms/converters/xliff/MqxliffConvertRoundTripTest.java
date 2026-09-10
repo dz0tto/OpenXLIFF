@@ -69,6 +69,8 @@ public final class MqxliffConvertRoundTripTest {
 		testNestedTripleWrongEptRidGetsDistinctStartRefs(catalog);
 		testNestedTripleWrongEptRid2GetsStartRef1(catalog);
 		testMemoqFormattingIdCollidesWithDocumentRid(catalog);
+		testMergeFillsEmptyTargetMqPhFromSource(catalog);
+		testMergeDoesNotWrapFilledMqPh(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -1357,6 +1359,79 @@ public final class MqxliffConvertRoundTripTest {
 					// best-effort cleanup
 				}
 			});
+		}
+	}
+
+	private static void testMergeFillsEmptyTargetMqPhFromSource(Path catalog) throws Exception {
+		String name = "Merge fills empty target ph from source mq:rxt";
+		Path dir = Files.createTempDirectory("oxlf-empty-mq-ph-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="ru" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">Jump back into the sporting action, <ph id="1">&lt;mq:rxt displaytext="%%handle%%" val="%%handle%%" /&gt;</ph></source>
+					    <target xml:space="preserve" state="translated"><ph id="1"/>! Возвращайтесь к спортивным играм!</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " handle payload", target, "%%handle%%");
+			assertContains(name + " mq:rxt", target, "mq:rxt");
+			assertFalse(name + ": must not leave empty self-closing ph",
+					target.matches("(?s).*<ph id=\"1\"\\s*/>.*"));
+			assertFalse(name + ": must not double-wrap",
+					target.contains("&lt;ph") || target.contains("&amp;lt;ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testMergeDoesNotWrapFilledMqPh(Path catalog) throws Exception {
+		String name = "filled empty target stays native mq:rxt not nested ph";
+		Path dir = Files.createTempDirectory("oxlf-empty-mq-noshadow-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">Hello<ph id="1">&lt;mq:ch val="x" /&gt;</ph>world</source>
+					    <target xml:space="preserve" state="translated">Hallo<ph id="1"/>Welt</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " mq:ch", target, "mq:ch");
+			assertFalse(name + ": extra wrap returned",
+					target.contains("&lt;ph") || target.contains("&amp;lt;ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
 		}
 	}
 

@@ -600,6 +600,11 @@ public class ToXliff2 {
 			String dataId = levshaStyle ? tag.getAttributeValue("id") : "ph" + tag.getAttributeValue("id");
 			String newPayload = levshaStyle ? levshaOriginalDataText(tag)
 					: (tag.getText() != null ? tag.getText() : "");
+			if (!levshaStyle && isSerializedEmptyPlaceholder(newPayload)) {
+				storeAttributes(tagAttributes, tag, dataId);
+				storeOriginalName(tagAttributes, tag.getName(), dataId);
+				return;
+			}
 			Element existing = findData(originalData, dataId);
 			if (existing != null) {
 				String oldPayload = existing.getText() != null ? existing.getText() : "";
@@ -668,10 +673,13 @@ public class ToXliff2 {
 			String numericId = normalizeInlineId(tag.getAttributeValue("id"));
 			String dataId = numericId != null ? numericId : tag.getAttributeValue("id");
 			if (!containsTag(originalData, dataId)) {
-				Element data = new Element("data");
-				data.setAttribute("id", dataId);
-				data.setText(originalDataTextForX(tag));
-				originalData.addContent(data);
+				String text = originalDataTextForX(tag);
+				if (!isSerializedEmptyPlaceholder(text)) {
+					Element data = new Element("data");
+					data.setAttribute("id", dataId);
+					data.setText(text);
+					originalData.addContent(data);
+				}
 			}
 			storeAttributes(tagAttributes, tag, "x" + tag.getAttributeValue("id"));
 			return;
@@ -698,8 +706,14 @@ public class ToXliff2 {
 			}
 			return text;
 		}
-		String serialized = tag.toString();
-		return serialized != null ? serialized : "";
+		String fromAttr = tag.getAttributeValue("equiv-text", "");
+		if (fromAttr.isEmpty()) {
+			fromAttr = tag.getAttributeValue("equiv", "");
+		}
+		if (!fromAttr.isEmpty()) {
+			return fromAttr;
+		}
+		return "";
 	}
 
 	private static boolean looksLikeSerializedPlaceholder(String text) {
@@ -709,6 +723,18 @@ public class ToXliff2 {
 		}
 		return t.startsWith("<x") || t.startsWith("<X") || t.startsWith("<ph") || t.startsWith("<PH")
 				|| t.startsWith("&lt;x") || t.startsWith("&lt;ph");
+	}
+
+	private static boolean isSerializedEmptyPlaceholder(String text) {
+		if (text == null || text.isBlank()) {
+			return true;
+		}
+		String t = text.trim();
+		if (t.startsWith("<mq:") || t.startsWith("&lt;mq:") || t.contains("<mq:") || t.contains("&lt;mq:")) {
+			return false;
+		}
+		return t.matches("(?i)<(?:ph|x)\\b[^>]*/>")
+				|| t.matches("(?i)<(?:ph|x)\\b[^>]*>\\s*</(?:ph|x)\\s*>");
 	}
 
 	/**

@@ -675,12 +675,13 @@ public class FromXliff2 {
 				result = ex;
 			}
 			if (result == null) {
-				// may come from mtc:matches
+				// Levsha empty <ph id="1" dataRef="1"/> — look up originalData by dataRef, then id.
 				result = new Element("ph");
 				result.setAttribute("id", id);
 				String dataRef = tag.getAttributeValue("dataRef");
-				if (tags.containsKey(dataRef)) {
-					result.addContent(tags.get(dataRef));
+				String key = resolveOriginalDataKey(tags, dataRef, id);
+				if (key != null && tags.containsKey(key) && tags.get(key) != null) {
+					result.addContent(tags.get(key));
 				}
 			}
 		}
@@ -811,6 +812,33 @@ public class FromXliff2 {
 		return ToOpenXliff.ORIGINAL_NAME_ATTR.equals(type) || ToOpenXliff.ORIG_ID_ATTR.equals(type)
 				|| ToOpenXliff.ORIG_RID_ATTR.equals(type) || "equiv-text".equals(type) || "equiv".equals(type)
 				|| "rid".equals(type);
+	}
+
+	private static String resolveOriginalDataKey(Map<String, String> tags, String dataRef, String id) {
+		if (tags == null) {
+			return null;
+		}
+		if (dataRef != null && !dataRef.isEmpty() && tags.containsKey(dataRef)) {
+			return dataRef;
+		}
+		if (id != null && !id.isEmpty() && tags.containsKey(id)) {
+			return id;
+		}
+		if (id != null && id.length() > 1 && (id.charAt(0) == 'x' || id.charAt(0) == 'p')
+				&& Character.isDigit(id.charAt(1))) {
+			String num = id.substring(1);
+			if (tags.containsKey(num)) {
+				return num;
+			}
+		}
+		if (id != null && id.length() > 2 && id.regionMatches(true, 0, "ph", 0, 2)
+				&& Character.isDigit(id.charAt(2))) {
+			String num = id.substring(2);
+			if (tags.containsKey(num)) {
+				return num;
+			}
+		}
+		return dataRef != null && !dataRef.isEmpty() ? dataRef : id;
 	}
 
 	/**
