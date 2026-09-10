@@ -90,7 +90,7 @@ public class ToXliff2 {
 		if (!fromAttr.isEmpty()) {
 			return fromAttr;
 		}
-		return extractEquivTextFromMarkup(ph.getText());
+		return extractQuotedAttrFromMarkup(ph.getText(), "equiv-text");
 	}
 
 	/** XLIFF 2.0 {@code ph/@type} is the counterpart of 1.2 {@code x/@ctype} / {@code ph/@type}. */
@@ -107,20 +107,59 @@ public class ToXliff2 {
 		}
 	}
 
-	private static String extractEquivTextFromMarkup(String markup) {
-		if (markup == null) {
+	/**
+	 * Read {@code attr="…"} from serialized placeholder markup. Scan while entities are
+	 * still escaped ({@code &quot;} has no raw {@code "}) so Unity
+	 * {@code equiv-text="&lt;align=&quot;right&quot;&gt;"} is not truncated at
+	 * {@code align=}.
+	 */
+	private static String extractQuotedAttrFromMarkup(String markup, String attrName) {
+		if (markup == null || attrName == null || attrName.isEmpty()) {
 			return null;
 		}
-		int start = markup.indexOf("equiv-text=\"");
-		if (start == -1) {
+		String needle = attrName + "=\"";
+		int start = indexOfIgnoreCase(markup, needle);
+		if (start < 0) {
 			return null;
 		}
-		start += "equiv-text=\"".length();
-		int end = markup.indexOf('"', start);
-		if (end == -1) {
+		start += needle.length();
+		int end = indexOfUnescapedQuote(markup, start);
+		if (end < 0) {
 			return null;
 		}
-		return markup.substring(start, end);
+		String value = markup.substring(start, end);
+		if (value.indexOf('<') >= 0 && value.indexOf('>') < 0) {
+			int decodedEnd = lastQuoteBeforeSelfClose(markup, start);
+			if (decodedEnd > start) {
+				return markup.substring(start, decodedEnd);
+			}
+		}
+		return value;
+	}
+
+	private static int indexOfIgnoreCase(String s, String needle) {
+		return s.toLowerCase().indexOf(needle.toLowerCase());
+	}
+
+	private static int indexOfUnescapedQuote(String s, int from) {
+		for (int i = from; i < s.length(); i++) {
+			if (s.startsWith("&quot;", i) || s.startsWith("&apos;", i)) {
+				i += 5;
+				continue;
+			}
+			if (s.charAt(i) == '"') {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static int lastQuoteBeforeSelfClose(String s, int from) {
+		int sc = s.indexOf("/>", from);
+		if (sc < 0) {
+			return -1;
+		}
+		return s.lastIndexOf('"', sc);
 	}
 
 	private static List<String> preserveAttributes = Arrays.asList("reformat", "datatype", "ts", "phase-name",
@@ -631,7 +670,7 @@ public class ToXliff2 {
 			if (!containsTag(originalData, dataId)) {
 				Element data = new Element("data");
 				data.setAttribute("id", dataId);
-				data.setText(tag.toString());
+				data.setText(originalDataTextForX(tag));
 				originalData.addContent(data);
 			}
 			storeAttributes(tagAttributes, tag, "x" + tag.getAttributeValue("id"));
@@ -648,10 +687,47 @@ public class ToXliff2 {
 	private static String levshaOriginalDataText(Element tag) {
 		String text = tag.getText();
 		if (text != null && !text.isEmpty()) {
+			if (looksLikeSerializedPlaceholder(text)) {
+				String extracted = extractQuotedAttrFromMarkup(text, "equiv-text");
+				if (extracted == null || extracted.isEmpty()) {
+					extracted = extractQuotedAttrFromMarkup(text, "equiv");
+				}
+				if (extracted != null && !extracted.isEmpty()) {
+					return extracted;
+				}
+			}
 			return text;
 		}
 		String serialized = tag.toString();
 		return serialized != null ? serialized : "";
+	}
+
+	private static boolean looksLikeSerializedPlaceholder(String text) {
+		String t = text.trim();
+		if (t.length() < 3) {
+			return false;
+		}
+		return t.startsWith("<x") || t.startsWith("<X") || t.startsWith("<ph") || t.startsWith("<PH")
+				|| t.startsWith("&lt;x") || t.startsWith("&lt;ph");
+	}
+
+	/**
+	 * Prefer decoded {@code equiv-text} over {@code Element.toString()} so Unity
+	 * {@code <align="right">} is stored as the tag, not a nested {@code <x …>} whose
+	 * quotes break later reconstructors.
+	 */
+	private static String originalDataTextForX(Element tag) {
+		if (tag == null) {
+			return "";
+		}
+		String equiv = tag.getAttributeValue("equiv-text", "");
+		if (equiv.isEmpty()) {
+			equiv = tag.getAttributeValue("equiv", "");
+		}
+		if (!equiv.isEmpty()) {
+			return equiv;
+		}
+		return levshaOriginalDataText(tag);
 	}
 
 	private static boolean hasPreserveSpace(Element e) {

@@ -45,6 +45,9 @@ public final class MqxliffConvertRoundTripTest {
 		testMergeRestoresPhPayloadsWithoutUnboundMq(catalog);
 		testMqChKeepsMemoQId(catalog);
 		testMqChNewlineValEscapesEquiv(catalog);
+		testMergePeelsLegacyToStringPhWrapOnTarget(catalog);
+		testMergeKeepsGenuineNestedPhOnTarget(catalog);
+		testUnityQuotedXStoresEquivNotSerializedX(catalog);
 		testSameIdBptEptBothPayloadsSurvive(catalog);
 		testPairedInlineEmitsScEcWithStartRef(catalog);
 		testPairedInlineOverlappingPairs(catalog);
@@ -263,6 +266,132 @@ public final class MqxliffConvertRoundTripTest {
 			} else {
 				pass(name);
 			}
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * Old Convert stored originalData as {@code Element.toString()} of the whole {@code <ph>}.
+	 * Merge must peel that extra wrap on target only when source ph is not nested.
+	 */
+	private static void testMergePeelsLegacyToStringPhWrapOnTarget(Path catalog) throws Exception {
+		String name = "Merge peels legacy toString() ph wrap on target";
+		Path dir = Files.createTempDirectory("oxlf-mq-legacy-wrap-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">Hello<ph id="1">&lt;mq:ch val="&#x23CE;" /&gt;</ph>world</source>
+					    <target xml:space="preserve" state="translated">Hallo<ph id="1">&lt;mq:ch val="&#x23CE;" /&gt;</ph>Welt</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			String data1 = dataContent(xml, "1");
+			if (data1 == null) {
+				fail(name + ": missing <data id=\"1\">");
+				return;
+			}
+			String wrapped = "&lt;ph id=\"1\"&gt;" + data1 + "&lt;/ph&gt;";
+			Matcher dataTag = Pattern.compile("<data\\s+id=\"1\"[^>]*>.*?</data>", Pattern.DOTALL).matcher(xml);
+			if (!dataTag.find()) {
+				fail(name + ": could not rewrite <data id=\"1\">");
+				return;
+			}
+			xml = dataTag.replaceFirst(Matcher.quoteReplacement("<data id=\"1\">" + wrapped + "</data>"));
+			Files.writeString(x21, xml, StandardCharsets.UTF_8);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " target mq:ch", target, "mq:ch");
+			assertFalse(name + ": target still has nested encoded ph",
+					target.contains("&lt;ph") || target.contains("&amp;lt;ph"));
+			assertContains(name + " source stays native", out, "<ph id=\"1\">&lt;mq:ch");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * If the original source already had an extra encoded {@code <ph>} layer, leave target nested.
+	 */
+	private static void testMergeKeepsGenuineNestedPhOnTarget(Path catalog) throws Exception {
+		String name = "Merge keeps genuine nested ph when source has it";
+		Path dir = Files.createTempDirectory("oxlf-mq-genuine-wrap-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">Hello<ph id="1">&lt;ph id="1"&gt;&amp;lt;mq:ch val="x" /&amp;gt;&lt;/ph&gt;</ph>world</source>
+					    <target xml:space="preserve" state="translated">Hallo<ph id="1">&lt;ph id="1"&gt;&amp;lt;mq:ch val="x" /&amp;gt;&lt;/ph&gt;</ph>Welt</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " nested layer kept", target, "&lt;ph");
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/** Unity quoted tags must land in originalData as the tag, not {@code <x … toString()>}. */
+	private static void testUnityQuotedXStoresEquivNotSerializedX(Path catalog) throws Exception {
+		String name = "Unity quoted x stores equiv-text not serialized x";
+		Path dir = Files.createTempDirectory("oxlf-unity-x-");
+		try {
+			Path src = dir.resolve("in.xliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+					 <file source-language="en" target-language="ru" datatype="html" original="t">
+					  <body>
+					   <trans-unit id="1">
+					    <source xml:space="preserve"><x id="x1" ctype="x-regexp-tag" equiv-text="&lt;align=&quot;right&quot;&gt;"/></source>
+					    <target xml:space="preserve"><x id="x1" ctype="x-regexp-tag" equiv-text="&lt;align=&quot;right&quot;&gt;"/></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xml = Files.readString(x21);
+			String data1 = dataContent(xml, "1");
+			if (data1 == null) {
+				fail(name + ": missing <data id=\"1\">");
+				return;
+			}
+			assertContains(name + " align tag", data1, "align=");
+			assertContains(name + " quoted right", data1, "right");
+			assertFalse(name + ": originalData must not be serialized <x>",
+					data1.contains("&lt;x") || data1.contains("<x ") || data1.contains("<x>"));
+			pass(name);
 		} finally {
 			deleteRecursive(dir);
 		}

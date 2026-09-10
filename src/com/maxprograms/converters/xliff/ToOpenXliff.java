@@ -309,11 +309,18 @@ public class ToOpenXliff {
      * Copy opaque MemoQ/Levsha payload onto the generated {@code ph}. Prefer
      * {@code e.getText()} so a {@code <ph>} that already wraps {@code mq:*} is not
      * re-serialized via {@code toString()} (that double-wraps {@code mq:ch}).
-     * {@code toString()} is only the fallback when the element has no child text
-     * (empty Levsha {@code <x/>}, or a real {@code mq:*} element).
+     * Empty Levsha {@code <x/>} uses {@code equiv-text} so Unity quoted tags are
+     * stored as the original markup, not a nested serialized {@code <x>}.
+     * {@code toString()} is only the fallback when text and equiv are both empty.
      */
     private static void copyPreservedPayload(Element ph, Element e) {
         String payload = e.getText();
+        if (payload == null || payload.isEmpty()) {
+            payload = e.getAttributeValue("equiv-text", "");
+        }
+        if (payload == null || payload.isEmpty()) {
+            payload = e.getAttributeValue("equiv", "");
+        }
         if (payload == null || payload.isEmpty()) {
             payload = e.toString();
         }

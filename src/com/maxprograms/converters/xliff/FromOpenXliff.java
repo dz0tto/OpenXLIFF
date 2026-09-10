@@ -146,7 +146,7 @@ public class FromOpenXliff {
                                 Element mrk = ToOpenXliff.locateMrk(target, e.getAttributeValue("mid"));
                                 mrk.setContent(segment.getChild("target").getContent());
                                 if (!mrk.getChildren().isEmpty()) {
-                                    replaceTags(mrk, 1);
+                                    replaceTags(mrk, 1, e);
                                 }
                             }
                             e.removePI(Constants.TOOLID);
@@ -182,7 +182,7 @@ public class FromOpenXliff {
                             target.setAttribute("state", "translated");
                         }
                         if (!target.getChildren().isEmpty()) {
-                            replaceTags(target, 1);
+                            replaceTags(target, 1, root.getChild("source"));
                         }
                         root.setAttribute("approved", "yes");
                     }
@@ -201,7 +201,7 @@ public class FromOpenXliff {
 
     private static final String MQ_NS = "MQXliff";
 
-    private static void replaceTags(Element target, int version)
+    private static void replaceTags(Element target, int version, Element skeletonSource)
             throws SAXException, IOException, ParserConfigurationException {
         StringBuilder sb = new StringBuilder();
         sb.append("<target");
@@ -248,7 +248,7 @@ public class FromOpenXliff {
                         sb.append(mrk.toString());
                     }
                 } else {
-                    appendRestoredInline(sb, e);
+                    appendRestoredInline(sb, e, skeletonSource);
                 }
             }
         }
@@ -268,11 +268,15 @@ public class FromOpenXliff {
      * payload is {@code {}} (not {@code <mq:…>}) used to become literal {@code {}} in the
      * created target.
      */
-    private static void appendRestoredInline(StringBuilder sb, Element e) {
+    private static void appendRestoredInline(StringBuilder sb, Element e, Element skeletonSource) {
         String text = e.getText();
         if (text == null) {
             text = "";
         }
+        String id = e.getAttributeValue("id", "");
+        String origId = e.getAttributeValue(ToOpenXliff.ORIG_ID_ATTR, "");
+        Element sourceInline = findSkeletonInline(skeletonSource, origId, id);
+        text = peelSerializedPhIfArtifact(text, sourceInline);
         String trimmed = text.trim();
         boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
         String name = e.getName();
@@ -297,6 +301,130 @@ public class FromOpenXliff {
         sb.append("</");
         sb.append(name);
         sb.append('>');
+    }
+
+    /**
+     * Old Convert stored {@code originalData} via {@code Element.toString()} of the whole
+     * {@code <ph>}, so Merge rebuilds {@code <ph>&lt;ph id="1"&gt;…&lt;/ph&gt;</ph>} on
+     * target. Source/skeleton is the authority: peel that extra wrap only on target, and
+     * only when the matching source ph is not itself nested.
+     */
+    public static String peelSerializedPhIfArtifact(String targetPayload, Element sourceInline) {
+        if (sourceInline == null) {
+            return targetPayload;
+        }
+        String sourcePayload = sourceInline.getText();
+        if (sourcePayload == null) {
+            sourcePayload = "";
+        }
+        if (unwrapSerializedPh(sourcePayload) != null) {
+            return targetPayload;
+        }
+        String peeled = unwrapSerializedPh(targetPayload);
+        if (peeled == null) {
+            return targetPayload;
+        }
+        if (ToOpenXliff.isMemoQPayload(peeled) || payloadsMatch(peeled, sourcePayload)) {
+            return peeled;
+        }
+        return targetPayload;
+    }
+
+    public static String unwrapSerializedPh(String payload) {
+        if (payload == null) {
+            return null;
+        }
+        String t = payload.trim();
+        if (t.length() < 8) {
+            return null;
+        }
+        if (startsWithIgnoreCase(t, "<ph")) {
+            int gt = t.indexOf('>');
+            if (gt < 0 || t.charAt(gt - 1) == '/') {
+                return null;
+            }
+            int end = lastIndexOfIgnoreCase(t, "</ph>");
+            if (end <= gt) {
+                return null;
+            }
+            return decodeXmlEntitiesOnce(t.substring(gt + 1, end).trim());
+        }
+        if (startsWithIgnoreCase(t, "&lt;ph")) {
+            int gt = indexOfIgnoreCase(t, "&gt;");
+            if (gt < 0) {
+                return null;
+            }
+            int end = lastIndexOfIgnoreCase(t, "&lt;/ph&gt;");
+            if (end <= gt) {
+                return null;
+            }
+            return decodeXmlEntitiesOnce(t.substring(gt + 4, end).trim());
+        }
+        return null;
+    }
+
+    private static boolean payloadsMatch(String peeled, String sourcePayload) {
+        if (peeled == null || sourcePayload == null) {
+            return false;
+        }
+        if (peeled.equals(sourcePayload)) {
+            return true;
+        }
+        return decodeXmlEntitiesOnce(peeled).equals(sourcePayload)
+                || peeled.equals(decodeXmlEntitiesOnce(sourcePayload));
+    }
+
+    private static String decodeXmlEntitiesOnce(String s) {
+        if (s == null || s.isEmpty()) {
+            return s == null ? "" : s;
+        }
+        return XMLUtils.uncleanText(s);
+    }
+
+    private static Element findSkeletonInline(Element skeletonSource, String origId, String id) {
+        if (skeletonSource == null) {
+            return null;
+        }
+        Element found = null;
+        if (origId != null && !origId.isEmpty()) {
+            found = findInlineById(skeletonSource, origId);
+        }
+        if (found == null && id != null && !id.isEmpty()) {
+            found = findInlineById(skeletonSource, id);
+        }
+        return found;
+    }
+
+    private static Element findInlineById(Element root, String id) {
+        if (root == null || id == null || id.isEmpty()) {
+            return null;
+        }
+        if (id.equals(root.getAttributeValue("id", ""))) {
+            String name = root.getName();
+            if ("ph".equals(name) || "x".equals(name) || ToOpenXliff.isPairingName(name) || "it".equals(name)) {
+                return root;
+            }
+        }
+        List<Element> children = root.getChildren();
+        for (int i = 0; i < children.size(); i++) {
+            Element found = findInlineById(children.get(i), id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static boolean startsWithIgnoreCase(String s, String prefix) {
+        return s.regionMatches(true, 0, prefix, 0, prefix.length());
+    }
+
+    private static int indexOfIgnoreCase(String s, String needle) {
+        return s.toLowerCase().indexOf(needle.toLowerCase());
+    }
+
+    private static int lastIndexOfIgnoreCase(String s, String needle) {
+        return s.toLowerCase().lastIndexOf(needle.toLowerCase());
     }
 
     private static void appendAttr(StringBuilder sb, String name, String value) {
@@ -390,7 +518,7 @@ public class FromOpenXliff {
                             target.setAttribute("xml:space", "preserve");
                         }
                         if (!target.getChildren().isEmpty()) {
-                            replaceTags(target, 2);
+                            replaceTags(target, 2, seg.getChild("source"));
                         }
                         seg.setAttribute("state", "final");
                     }
