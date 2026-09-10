@@ -687,10 +687,28 @@ public class ToXliff2 {
 	private static String levshaOriginalDataText(Element tag) {
 		String text = tag.getText();
 		if (text != null && !text.isEmpty()) {
+			if (looksLikeSerializedPlaceholder(text)) {
+				String extracted = extractQuotedAttrFromMarkup(text, "equiv-text");
+				if (extracted == null || extracted.isEmpty()) {
+					extracted = extractQuotedAttrFromMarkup(text, "equiv");
+				}
+				if (extracted != null && !extracted.isEmpty()) {
+					return extracted;
+				}
+			}
 			return text;
 		}
 		String serialized = tag.toString();
 		return serialized != null ? serialized : "";
+	}
+
+	private static boolean looksLikeSerializedPlaceholder(String text) {
+		String t = text.trim();
+		if (t.length() < 3) {
+			return false;
+		}
+		return t.startsWith("<x") || t.startsWith("<X") || t.startsWith("<ph") || t.startsWith("<PH")
+				|| t.startsWith("&lt;x") || t.startsWith("&lt;ph");
 	}
 
 	/**

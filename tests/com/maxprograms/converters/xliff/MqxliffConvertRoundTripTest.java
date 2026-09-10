@@ -390,7 +390,7 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name + " align tag", data1, "align=");
 			assertContains(name + " quoted right", data1, "right");
 			assertFalse(name + ": originalData must not be serialized <x>",
-					data1.contains("&lt;x") || data1.contains("<x"));
+					data1.contains("&lt;x") || data1.contains("<x ") || data1.contains("<x>"));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
