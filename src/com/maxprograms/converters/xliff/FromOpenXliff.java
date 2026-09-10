@@ -277,6 +277,19 @@ public class FromOpenXliff {
         String origId = e.getAttributeValue(ToOpenXliff.ORIG_ID_ATTR, "");
         Element sourceInline = findSkeletonInline(skeletonSource, origId, id);
         text = peelSerializedPhIfArtifact(text, sourceInline);
+        if (isEmptyPlaceholderPayload(text) && sourceInline != null) {
+            String sourceText = sourceInline.getText();
+            if (sourceText == null) {
+                sourceText = "";
+            }
+            if (ToOpenXliff.isMemoQPayload(sourceText) || !isEmptyPlaceholderPayload(sourceText)) {
+                text = sourceText;
+            }
+            copyAttrIfMissing(e, sourceInline, "equiv-text");
+            copyAttrIfMissing(e, sourceInline, "equiv");
+            copyAttrIfMissing(e, sourceInline, "ctype");
+            copyAttrIfMissing(e, sourceInline, "type");
+        }
         String trimmed = text.trim();
         boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
         String name = e.getName();
@@ -321,7 +334,7 @@ public class FromOpenXliff {
             return targetPayload;
         }
         String peeled = unwrapSerializedPh(targetPayload);
-        if (peeled == null) {
+        if (peeled == null || peeled.isBlank()) {
             return targetPayload;
         }
         if (ToOpenXliff.isMemoQPayload(peeled) || payloadsMatch(peeled, sourcePayload)) {
@@ -372,6 +385,30 @@ public class FromOpenXliff {
         }
         return decodeXmlEntitiesOnce(peeled).equals(sourcePayload)
                 || peeled.equals(decodeXmlEntitiesOnce(sourcePayload));
+    }
+
+    private static boolean isEmptyPlaceholderPayload(String text) {
+        if (text == null || text.isBlank()) {
+            return true;
+        }
+        String decoded = decodeXmlEntitiesOnce(text).trim();
+        if (decoded.startsWith("<mq:") || decoded.startsWith("&lt;mq:") || decoded.contains("<mq:")
+                || decoded.contains("&lt;mq:")) {
+            return false;
+        }
+        return decoded.matches("(?i)<(?:ph|x)\\b[^>]*/>")
+                || decoded.matches("(?i)<(?:ph|x)\\b[^>]*>\\s*</(?:ph|x)\\s*>");
+    }
+
+    private static void copyAttrIfMissing(Element dest, Element from, String name) {
+        if (dest == null || from == null || name == null) {
+            return;
+        }
+        String value = from.getAttributeValue(name, "");
+        if (value.isEmpty() || !dest.getAttributeValue(name, "").isEmpty()) {
+            return;
+        }
+        dest.setAttribute(name, value);
     }
 
     private static String decodeXmlEntitiesOnce(String s) {

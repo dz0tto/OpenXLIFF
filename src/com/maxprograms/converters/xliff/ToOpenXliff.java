@@ -322,7 +322,13 @@ public class ToOpenXliff {
             payload = e.getAttributeValue("equiv", "");
         }
         if (payload == null || payload.isEmpty()) {
-            payload = e.toString();
+            // Empty ph/x: never toString() the marker (that stores <ph id="1"/> and
+            // later double-wraps mq:*). Leave empty so source originalData stays authority.
+            if ("ph".equals(e.getName()) || "x".equals(e.getName())) {
+                payload = "";
+            } else {
+                payload = e.toString();
+            }
         }
         String equiv = e.getAttributeValue("equiv-text", "");
         if (equiv.isEmpty()) {
