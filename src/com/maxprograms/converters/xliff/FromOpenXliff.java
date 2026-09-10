@@ -26,6 +26,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Vector;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.xml.parsers.ParserConfigurationException;
 
@@ -53,6 +55,14 @@ public class FromOpenXliff {
     private static String tgtLang;
     private static boolean hasTarget;
     private static int auto;
+
+    /**
+     * Legacy Convert ({@code pairedInline} off) stored {@code bpt}/{@code ept} via
+     * {@code Element.toString()} inside a {@code ph}. Match a single pairing root,
+     * optionally still entity-encoded from {@code originalData}.
+     */
+    private static final Pattern SERIALIZED_PAIRING = Pattern
+            .compile("(?is)^<(bpt|ept|it|bx|ex)\\b([^>/]*)(?:\\s*/>|>(.*)</\\1\\s*>)$");
 
     private FromOpenXliff() {
         // do not instantiate this class
@@ -267,6 +277,10 @@ public class FromOpenXliff {
      * Never unwrap an inline marker to its inner text. A MemoQ {@code bpt}/{@code ph} whose
      * payload is {@code {}} (not {@code <mq:…>}) used to become literal {@code {}} in the
      * created target.
+     * <p>
+     * Exception: a flattened pairing marker whose payload <em>is</em> a serialized
+     * {@code bpt}/{@code ept} (legacy Convert without {@code pairedInline}) is emitted
+     * as that element, not wrapped again in {@code ph}.
      */
     private static void appendRestoredInline(StringBuilder sb, Element e, Element skeletonSource) {
         String text = e.getText();
@@ -289,6 +303,13 @@ public class FromOpenXliff {
             copyAttrIfMissing(e, sourceInline, "equiv");
             copyAttrIfMissing(e, sourceInline, "ctype");
             copyAttrIfMissing(e, sourceInline, "type");
+        }
+        if (isFlattenedWrapperName(e.getName())) {
+            String pairingMarkup = serializedPairingMarkup(text);
+            if (pairingMarkup != null && skeletonAllowsPairingUnwrap(skeletonSource, pairingMarkup)) {
+                sb.append(pairingMarkup);
+                return;
+            }
         }
         String trimmed = text.trim();
         boolean mqPayload = ToOpenXliff.isMemoQPayload(trimmed);
@@ -374,6 +395,97 @@ public class FromOpenXliff {
             return decodeXmlEntitiesOnce(t.substring(gt + 4, end).trim());
         }
         return null;
+    }
+
+    /**
+     * Legacy Convert flattened pairing inlines to {@code ph.setText(e.toString())}.
+     * If {@code payload} is a single {@code bpt}/{@code ept}/{@code it}/{@code bx}/{@code ex},
+     * return that markup (decoded once when still entity-wrapped) so Merge can emit
+     * the original element instead of {@code <ph>&lt;bpt…&gt;</ph>}.
+     */
+    public static String serializedPairingMarkup(String payload) {
+        if (payload == null) {
+            return null;
+        }
+        String t = payload.trim();
+        if (t.isEmpty()) {
+            return null;
+        }
+        if (startsWithIgnoreCase(t, "&lt;")) {
+            t = decodeXmlEntitiesOnce(t).trim();
+        }
+        if (!SERIALIZED_PAIRING.matcher(t).matches()) {
+            return null;
+        }
+        return t;
+    }
+
+    private static boolean isFlattenedWrapperName(String name) {
+        return "ph".equals(name) || "x".equals(name);
+    }
+
+    private static boolean skeletonAllowsPairingUnwrap(Element skeletonSource, String pairingMarkup) {
+        if (skeletonSource == null) {
+            return true;
+        }
+        Matcher m = SERIALIZED_PAIRING.matcher(pairingMarkup);
+        if (!m.matches()) {
+            return false;
+        }
+        String name = m.group(1);
+        String attrs = m.group(2);
+        String id = attrValue(attrs, "id");
+        String rid = attrValue(attrs, "rid");
+        if (findInlineByNameAndKey(skeletonSource, name, id, rid) != null) {
+            return true;
+        }
+        return containsNamedInline(skeletonSource, name);
+    }
+
+    private static String attrValue(String attrs, String name) {
+        if (attrs == null || name == null) {
+            return "";
+        }
+        Matcher am = Pattern.compile("(?i)\\b" + Pattern.quote(name) + "\\s*=\\s*\"([^\"]*)\"").matcher(attrs);
+        return am.find() ? am.group(1) : "";
+    }
+
+    private static Element findInlineByNameAndKey(Element root, String name, String id, String rid) {
+        if (root == null || name == null) {
+            return null;
+        }
+        if (name.equals(root.getName())) {
+            if (id != null && !id.isEmpty() && id.equals(root.getAttributeValue("id", ""))) {
+                return root;
+            }
+            if (rid != null && !rid.isEmpty() && rid.equals(root.getAttributeValue("rid", ""))) {
+                return root;
+            }
+        }
+        List<Element> children = root.getChildren();
+        for (int i = 0; i < children.size(); i++) {
+            Element found = findInlineByNameAndKey(children.get(i), name, id, rid);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsNamedInline(Element root, String name) {
+        if (root == null || name == null) {
+            return false;
+        }
+        if (name.equals(root.getName())) {
+            return true;
+        }
+        List<Element> children = root.getChildren();
+        for (int i = 0; i < children.size(); i++) {
+            if (containsNamedInline(children.get(i), name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean payloadsMatch(String peeled, String sourcePayload) {

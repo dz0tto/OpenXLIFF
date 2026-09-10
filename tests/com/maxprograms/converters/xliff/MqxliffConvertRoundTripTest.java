@@ -71,6 +71,8 @@ public final class MqxliffConvertRoundTripTest {
 		testMemoqFormattingIdCollidesWithDocumentRid(catalog);
 		testMergeFillsEmptyTargetMqPhFromSource(catalog);
 		testMergeDoesNotWrapFilledMqPh(catalog);
+		testSerializedPairingMarkupHelper();
+		testMergeUnwrapsLegacyFlattenedBptEpt(catalog);
 
 		if (failures > 0) {
 			System.err.println(failures + " failure(s)");
@@ -1429,6 +1431,73 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name + " mq:ch", target, "mq:ch");
 			assertFalse(name + ": extra wrap returned",
 					target.contains("&lt;ph") || target.contains("&amp;lt;ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	private static void testSerializedPairingMarkupHelper() {
+		String name = "serializedPairingMarkup unwraps bpt/ept only";
+		assertEquals(name + " bpt", "<bpt id=\"1\" rid=\"1\">&lt;rpr id=\"0\"&gt;</bpt>",
+				FromOpenXliff.serializedPairingMarkup("<bpt id=\"1\" rid=\"1\">&lt;rpr id=\"0\"&gt;</bpt>"));
+		assertEquals(name + " encoded ept", "<ept id=\"1\" rid=\"1\"></ept>",
+				FromOpenXliff.serializedPairingMarkup("&lt;ept id=\"1\" rid=\"1\"&gt;&lt;/ept&gt;"));
+		assertEquals(name + " self-close ept", "<ept id=\"1\" rid=\"1\"/>",
+				FromOpenXliff.serializedPairingMarkup("<ept id=\"1\" rid=\"1\"/>"));
+		assertEquals(name + " mq ph stays null", null,
+				FromOpenXliff.serializedPairingMarkup("<ph id=\"4\">&lt;mq:rxt val=\"X\"/&gt;</ph>"));
+		assertEquals(name + " mq payload stays null", null,
+				FromOpenXliff.serializedPairingMarkup("&lt;mq:rxt displaytext=\"X\" val=\"X\"/&gt;"));
+		pass(name);
+	}
+
+	/**
+	 * Direct mqxliff upload converted before {@code pairedInline} flattened each
+	 * {@code bpt}/{@code ept} to {@code <ph id=counter>} with {@code e.toString()}
+	 * as the payload. Merge must emit the original pairing elements (own id/rid)
+	 * and leave native mq {@code ph} ids alone.
+	 */
+	private static void testMergeUnwrapsLegacyFlattenedBptEpt(Path catalog) throws Exception {
+		String name = "Merge unwraps legacy flattened bpt/ept";
+		Path dir = Files.createTempDirectory("oxlf-legacy-bpt-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="xml" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">A <bpt id="1" rid="1">&lt;rpr id="0"&gt;</bpt>B<ept id="1" rid="1"></ept> C <ph id="4">&lt;mq:rxt displaytext="X" val="X"/&gt;</ph></source>
+					    <target xml:space="preserve" state="translated">A <bpt id="1" rid="1">&lt;rpr id="0"&gt;</bpt>B<ept id="1" rid="1"></ept> C <ph id="4">&lt;mq:rxt displaytext="X" val="X"/&gt;</ph></target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true, false);
+			String mid = Files.readString(x21);
+			assertContains(name + " legacy flatten stored ph", mid, "<ph");
+			assertFalse(name + ": pairedInline was off, no sc", mid.contains("<sc"));
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " target bpt", target, "<bpt");
+			assertContains(name + " target ept", target, "<ept");
+			assertContains(name + " target bpt id", target, "id=\"1\"");
+			assertContains(name + " target rid", target, "rid=\"1\"");
+			assertContains(name + " rpr payload", target, "&lt;rpr id=\"0\"&gt;");
+			assertContains(name + " mq ph id", target, "<ph id=\"4\">");
+			assertContains(name + " mq:rxt", target, "mq:rxt");
+			assertFalse(name + ": must not ph-wrap serialized bpt",
+					target.contains("&lt;bpt") || target.contains("&amp;lt;bpt"));
+			assertFalse(name + ": must not ph-wrap serialized ept",
+					target.contains("&lt;ept") || target.contains("&amp;lt;ept"));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);
