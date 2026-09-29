@@ -259,6 +259,7 @@ public class FromXliff2 {
 			}
 
 			Map<String, List<String[]>> attributes = new HashMap<>();
+			Map<String, String> tagClones = new HashMap<>();
 			Element metadata = source.getChild("mda:metadata");
 			if (metadata != null) {
 				List<Element> groups = metadata.getChildren("mda:metaGroup");
@@ -282,8 +283,19 @@ public class FromXliff2 {
 							transUnit.setAttribute(meta.getAttributeValue("type"), meta.getText());
 						}
 					}
+					if (TAG_CLONES_CATEGORY.equals(group.getAttributeValue("category"))) {
+						List<Element> metas = group.getChildren("mda:meta");
+						for (int i = 0; i < metas.size(); i++) {
+							Element meta = metas.get(i);
+							String cloneId = meta.getAttributeValue("type");
+							if (!cloneId.isEmpty() && !meta.getText().isEmpty()) {
+								tagClones.put(cloneId, meta.getText());
+							}
+						}
+					}
 				}
 			}
+			applyTagClones(tags, attributes, tagClones, collectInlineDataRefs(source));
 
 			Element joinedSource = new Element("source");
 			Element joinedTarget = new Element("target");
@@ -812,6 +824,107 @@ public class FromXliff2 {
 		return ToOpenXliff.ORIGINAL_NAME_ATTR.equals(type) || ToOpenXliff.ORIG_ID_ATTR.equals(type)
 				|| ToOpenXliff.ORIG_RID_ATTR.equals(type) || "equiv-text".equals(type) || "equiv".equals(type)
 				|| "rid".equals(type);
+	}
+
+	/** Unit metadata category written by the editor for duplicated inline tags ({@code clone -> original}). */
+	public static final String TAG_CLONES_CATEGORY = "tagClones";
+
+	/**
+	 * A duplicated tag ({@code <id>.d<n>}) must merge exactly like the tag it copies:
+	 * inherit the original's payload and stored 1.2 attributes whenever the clone has
+	 * none of its own. Chains ({@code a.d2 -> a}) are followed to the root original.
+	 */
+	static void applyTagClones(Map<String, String> tags, Map<String, List<String[]>> attributes,
+			Map<String, String> tagClones) {
+		applyTagClones(tags, attributes, tagClones, new HashMap<>());
+	}
+
+	/**
+	 * @param inlineDataRefs {@code inline id -> dataRef} for the unit's inline
+	 *                       elements, so a clone without its own {@code dataRef}
+	 *                       still reaches the original's {@code originalData}.
+	 */
+	static void applyTagClones(Map<String, String> tags, Map<String, List<String[]>> attributes,
+			Map<String, String> tagClones, Map<String, String> inlineDataRefs) {
+		if (tagClones == null || tagClones.isEmpty()) {
+			return;
+		}
+		Iterator<Map.Entry<String, String>> it = tagClones.entrySet().iterator();
+		while (it.hasNext()) {
+			Map.Entry<String, String> entry = it.next();
+			String cloneId = entry.getKey();
+			String original = entry.getValue();
+			int hops = 0;
+			while (tagClones.containsKey(original) && hops++ < 32) {
+				original = tagClones.get(original);
+			}
+			if (cloneId.equals(original)) {
+				continue;
+			}
+			if (tags != null && !tags.containsKey(cloneId)) {
+				String payloadKey = null;
+				if (tags.containsKey(original)) {
+					payloadKey = original;
+				} else if (inlineDataRefs != null) {
+					String dataRef = inlineDataRefs.get(original);
+					if (dataRef != null && tags.containsKey(dataRef)) {
+						payloadKey = dataRef;
+					}
+				}
+				if (payloadKey != null) {
+					tags.put(cloneId, tags.get(payloadKey));
+				}
+			}
+			if (attributes != null && !attributes.containsKey(cloneId) && attributes.containsKey(original)) {
+				List<String[]> copy = new ArrayList<>();
+				List<String[]> list = attributes.get(original);
+				for (int i = 0; i < list.size(); i++) {
+					String[] pair = list.get(i);
+					if (ToOpenXliff.ORIG_ID_ATTR.equals(pair[0]) || ToOpenXliff.ORIG_RID_ATTR.equals(pair[0])
+							|| "id".equals(pair[0])) {
+						// a clone is a new inline; it must not reuse the original's 1.2 id
+						continue;
+					}
+					copy.add(new String[] { pair[0], pair[1] });
+				}
+				attributes.put(cloneId, copy);
+			}
+		}
+	}
+
+	/** {@code id -> dataRef} for every inline element under the unit's segments (source and target). */
+	static Map<String, String> collectInlineDataRefs(Element unit) {
+		Map<String, String> result = new HashMap<>();
+		if (unit == null) {
+			return result;
+		}
+		List<Element> children = unit.getChildren();
+		for (int i = 0; i < children.size(); i++) {
+			Element child = children.get(i);
+			if ("segment".equals(child.getName()) || "ignorable".equals(child.getName())) {
+				collectInlineDataRefs(child.getChild("source"), result);
+				collectInlineDataRefs(child.getChild("target"), result);
+			}
+		}
+		return result;
+	}
+
+	private static void collectInlineDataRefs(Element container, Map<String, String> result) {
+		if (container == null) {
+			return;
+		}
+		List<Element> children = container.getChildren();
+		for (int i = 0; i < children.size(); i++) {
+			Element e = children.get(i);
+			String id = e.getAttributeValue("id");
+			String dataRef = e.getAttributeValue("dataRef");
+			if (!id.isEmpty() && !dataRef.isEmpty() && !result.containsKey(id)) {
+				result.put(id, dataRef);
+			}
+			if ("pc".equals(e.getName()) || "mrk".equals(e.getName())) {
+				collectInlineDataRefs(e, result);
+			}
+		}
 	}
 
 	private static String resolveOriginalDataKey(Map<String, String> tags, String dataRef, String id) {

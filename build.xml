@@ -115,5 +115,9 @@
         </java>
         <java classname="com.maxprograms.converters.msoffice.MSOfficeKeepSegmentsTest"
               classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true" />
+        <java classname="com.maxprograms.xliff2.TagClonesMergeTest"
+              classpathref="OpenXLIFF.test.classpath" fork="true" failonerror="true">
+            <arg value="${basedir}/catalog/catalog.xml" />
+        </java>
     </target>
 </project>
