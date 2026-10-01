@@ -40,24 +40,28 @@ import com.maxprograms.xml.XMLOutputter;
 
 public class Resegmenter {
 
-    private static Segmenter segmenter;
-    private static boolean canResegment;
-    private static boolean translate;
+    private final Segmenter segmenter;
+    private boolean canResegment;
+    private boolean translate;
 
-    private Resegmenter() {
-        // do not instantiate this class
-        // use run method instead
+    /**
+     * Each {@link #run} owns its segmenter and file-level flags. Those used to be static, so
+     * parallel {@code createProject} jobs corrupted {@code tags} ({@code ConcurrentModificationException}
+     * in {@code Segmenter.hideTags}) and applied another file's {@code canResegment}/{@code translate}.
+     */
+    private Resegmenter(Segmenter segmenter) {
+        this.segmenter = segmenter;
     }
 
     public static List<String> run(String xliff, String srx, String srcLang, Catalog catalog) {
         List<String> result = new ArrayList<>();
         try {
-            segmenter = new Segmenter(srx, srcLang, catalog);
+            Resegmenter job = new Resegmenter(new Segmenter(srx, srcLang, catalog));
             SAXBuilder builder = new SAXBuilder();
             builder.setEntityResolver(catalog);
             Document doc = builder.build(xliff);
             Element root = doc.getRootElement();
-            recurse(root);
+            job.recurse(root);
             try (FileOutputStream out = new FileOutputStream(new File(xliff))) {
                 XMLOutputter outputter = new XMLOutputter();
                 outputter.preserveSpace(true);
@@ -74,7 +78,7 @@ public class Resegmenter {
         return result;
     }
 
-    private static void recurse(Element root) throws SAXException, IOException, ParserConfigurationException {
+    private void recurse(Element root) throws SAXException, IOException, ParserConfigurationException {
         if ("file".equals(root.getName())) {
             canResegment = "yes".equals(root.getAttributeValue("canResegment", "yes"));
             translate = "yes".equals(root.getAttributeValue("translate", "yes"));
@@ -98,7 +102,7 @@ public class Resegmenter {
         }
     }
 
-    private static void resegmentUnit(Element unit) throws SAXException, IOException, ParserConfigurationException {
+    private void resegmentUnit(Element unit) throws SAXException, IOException, ParserConfigurationException {
         String unitId = unit.getAttributeValue("id");
         List<XMLNode> original = new ArrayList<>(unit.getContent());
         List<XMLNode> rebuilt = new ArrayList<>();
