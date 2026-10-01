@@ -41,6 +41,9 @@ import com.maxprograms.xml.XMLOutputter;
 
 public class ToOpenXliff {
 
+    /** One conversion at a time. The fields below are static and not safe to share across files. */
+    private static final Object RUN_LOCK = new Object();
+
     private static List<String> namespaces;
     private static int tag;
     private static final Set<String> usedIds = new HashSet<>();
@@ -424,6 +427,12 @@ public class ToOpenXliff {
     }
 
     public static List<String> run(Map<String, String> params) {
+        synchronized (RUN_LOCK) {
+            return runLocked(params);
+        }
+    }
+
+    private static List<String> runLocked(Map<String, String> params) {
         List<String> result = new ArrayList<>();
         String inputFile = params.get("source");
         String xliffFile = params.get("xliff");
