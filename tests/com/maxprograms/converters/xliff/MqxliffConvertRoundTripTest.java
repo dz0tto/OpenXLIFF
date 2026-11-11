@@ -71,6 +71,9 @@ public final class MqxliffConvertRoundTripTest {
 		testMemoqFormattingIdCollidesWithDocumentRid(catalog);
 		testMergeFillsEmptyTargetMqPhFromSource(catalog);
 		testMergeDoesNotWrapFilledMqPh(catalog);
+		testMergeRestoresBareXPlaceholder(catalog);
+		testMergeRestoresBareXFromSkeletonWhenNameWasDropped(catalog);
+		testMergeRestoresBareXBesideMqPh(catalog);
 		testSerializedPairingMarkupHelper();
 		testMergeUnwrapsLegacyFlattenedBptEpt(catalog);
 
@@ -1431,6 +1434,135 @@ public final class MqxliffConvertRoundTripTest {
 			assertContains(name + " mq:ch", target, "mq:ch");
 			assertFalse(name + ": extra wrap returned",
 					target.contains("&lt;ph") || target.contains("&amp;lt;ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * MemoQ image placeholder: {@code <x id="1"/>} next to Word's "Description
+	 * automatically generated". Export must not rewrite that code as {@code <ph>}.
+	 */
+	private static void testMergeRestoresBareXPlaceholder(Path catalog) throws Exception {
+		String name = "Merge keeps bare x placeholder";
+		Path dir = Files.createTempDirectory("oxlf-bare-x-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="ru" datatype="x-mqxliff" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source mq:segpart="2" mq:hasfollowingobject="hasfollowingobject" xml:space="preserve">Text<x id="1"/>Description automatically generated</source>
+					    <target xml:space="preserve" state="translated">Описание<x id="1"/>Текст</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			assertContains(name + " source keeps x", out, "mq:hasfollowingobject");
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " translated before the code", target, "Описание");
+			assertContains(name + " x", target, "<x");
+			assertContains(name + " id", target, "id=\"1\"");
+			int xAt = target.indexOf("<x");
+			assertFalse(name + ": code must stay between the moved words",
+					xAt < 0 || xAt < target.indexOf("Описание") || target.indexOf("Текст") < xAt);
+			assertFalse(name + ": bare x must not become ph", target.contains("<ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * A project created before the name was stored has no {@code oxlf-original}.
+	 * Merge still owes the skeleton {@code <x>} when the placeholder is empty.
+	 */
+	private static void testMergeRestoresBareXFromSkeletonWhenNameWasDropped(Path catalog) throws Exception {
+		String name = "Merge restores bare x from skeleton after name was dropped";
+		Path dir = Files.createTempDirectory("oxlf-bare-x-old-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="ru" datatype="x-mqxliff" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source mq:segpart="2" mq:hasfollowingobject="hasfollowingobject" xml:space="preserve">Text<x id="1"/>Description automatically generated</source>
+					    <target xml:space="preserve" state="translated">Описание<x id="1"/>Текст</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			String xliff = Files.readString(x21);
+			assertContains(name + " name was stored", xliff, "oxlf-original");
+			Path stripped = dir.resolve("stripped.xlf");
+			Files.writeString(stripped, xliff.replace("oxlf-original", "oxlf-dropped")
+					.replace("oxlf-orig-id", "oxlf-dropped-id"));
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(stripped.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " x", target, "<x");
+			assertContains(name + " id", target, "id=\"1\"");
+			assertFalse(name + ": dropped name must not export as ph", target.contains("<ph"));
+			pass(name);
+		} finally {
+			deleteRecursive(dir);
+		}
+	}
+
+	/**
+	 * The wrapper id is a counter ({@code 1}) while the MemoQ {@code <x>} id is
+	 * {@code 9}. The mq {@code <ph>} beside it must stay a {@code <ph>} and keep its payload.
+	 */
+	private static void testMergeRestoresBareXBesideMqPh(Path catalog) throws Exception {
+		String name = "Merge restores x id 9 and keeps mq ph";
+		Path dir = Files.createTempDirectory("oxlf-bare-x-id9-");
+		try {
+			Path src = dir.resolve("in.mqxliff");
+			write(src, """
+					<?xml version="1.0" encoding="UTF-8"?>
+					<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:mq="MQXliff">
+					 <file source-language="en" target-language="de" datatype="x-mqxliff" original="t">
+					  <body>
+					   <trans-unit id="tu1" approved="yes">
+					    <source xml:space="preserve">Hello <ph id="1">&lt;mq:rxt displaytext="A" val="A" /&gt;</ph> <x id="9"/> world</source>
+					    <target xml:space="preserve" state="translated">Hallo <ph id="1"/> <x id="9"/> Welt</target>
+					   </trans-unit>
+					  </body>
+					 </file>
+					</xliff>
+					""");
+			Path x21 = convertToXliff21(src, dir, catalog, true);
+			Path back = dir.resolve("merged.mqxliff");
+			List<String> merge = Merge.merge(x21.toString(), back.toString(), catalog.toString(), true);
+			assertEquals(name + " merge status", Constants.SUCCESS, merge.get(0));
+			String out = Files.readString(back);
+			int targetAt = out.indexOf("<target");
+			int targetEnd = out.indexOf("</target>", targetAt);
+			String target = targetAt >= 0 && targetEnd > targetAt ? out.substring(targetAt, targetEnd) : "";
+			assertContains(name + " mq payload", target, "val=\"A\"");
+			assertContains(name + " ph", target, "<ph");
+			assertContains(name + " x", target, "<x");
+			assertContains(name + " original x id", target, "id=\"9\"");
+			assertFalse(name + ": x must not keep the wrapper id", target.contains("id=\"2\""));
 			pass(name);
 		} finally {
 			deleteRecursive(dir);

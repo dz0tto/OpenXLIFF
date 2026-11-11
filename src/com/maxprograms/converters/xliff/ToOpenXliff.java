@@ -97,6 +97,27 @@ public class ToOpenXliff {
         return isLevshaStyleInline(e) || isMemoQPayloadInline(e);
     }
 
+    /** True when {@code e} has text or child elements. A bare {@code <x id="1"/>} does not. */
+    private static boolean hasInlinePayload(Element e) {
+        if (e == null) {
+            return false;
+        }
+        String text = e.getText();
+        if (text != null && !text.isBlank()) {
+            return true;
+        }
+        List<XMLNode> content = e.getContent();
+        if (content == null) {
+            return false;
+        }
+        for (int i = 0; i < content.size(); i++) {
+            if (content.get(i).getNodeType() == XMLNode.ELEMENT_NODE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Original 1.2 {@code id} before {@code uniqueInlineId} (closer {@code 1} → {@code 1e}). */
     public static final String ORIG_ID_ATTR = "oxlf-orig-id";
     /** Original 1.2 {@code rid} when the source had one. Absent means the pair had no rid. */
@@ -1152,11 +1173,24 @@ public class ToOpenXliff {
                             || "it".equals(name)) {
                         Element ph = new Element("ph");
                         ph.setAttribute("id", inlinePhId(e));
+                        // A bare MemoQ <x id="1"/> has no equiv-text and no mq payload.
+                        // toString() of that marker is the only record of the element name,
+                        // and ToXliff2 drops it as an empty stub, so the export comes back
+                        // as <ph>. Keep the name and the original id on the wrapper instead.
+                        if ("x".equals(name) && !isPreservedInline(e)) {
+                            ph.setAttribute(ORIGINAL_NAME_ATTR, "x");
+                            String rawId = e.getAttributeValue("id", "");
+                            if (!rawId.isEmpty()) {
+                                ph.setAttribute(ORIG_ID_ATTR, rawId);
+                            }
+                        }
                         // Levsha <x equiv-text> and native MemoQ <ph>mq:…</ph>: keep opaque child
                         // text + display hint. Never Element.toString() for text payloads — it
                         // double-wraps mq:ch and collapses nested entities (&amp;lt;→&lt;).
                         if (isPreservedInline(e)) {
                             copyPreservedPayload(ph, e);
+                        } else if ("x".equals(name) && !hasInlinePayload(e)) {
+                            // identity is oxlf-original / oxlf-orig-id
                         } else {
                             ph.setText(e.toString());
                         }

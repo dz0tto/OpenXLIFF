@@ -597,13 +597,32 @@ public class FromXliff2 {
 		if ("ph".equals(tag.getName())) {
 			String id = tag.getAttributeValue("id");
 			if (id.startsWith("ph")) {
-				Element ph = new Element("ph");
-				ph.setAttribute("id", id.substring("ph".length()));
-				ph.addContent(tags.get(id));
+				boolean standaloneX = "x".equals(storedMeta(attributes, id, ToOpenXliff.ORIGINAL_NAME_ATTR));
+				Element ph = new Element(standaloneX ? "x" : "ph");
+				String outId = id.substring("ph".length());
+				if (standaloneX) {
+					String origId = storedMeta(attributes, id, ToOpenXliff.ORIG_ID_ATTR);
+					if (origId != null && !origId.isEmpty()) {
+						outId = origId;
+					}
+				}
+				ph.setAttribute("id", outId);
+				String payload = tags.get(id);
+				if (standaloneX && isSerializedEmptyMarkup(payload)) {
+					payload = null;
+				}
+				if (!standaloneX) {
+					ph.addContent(tags.get(id));
+				} else if (payload != null) {
+					ph.addContent(payload);
+				}
 				if (attributes != null && attributes.containsKey(id)) {
 					List<String[]> list = attributes.get(id);
 					for (int i = 0; i < list.size(); i++) {
 						String[] pair = list.get(i);
+						if (standaloneX && (pair[0].startsWith("oxlf-") || "id".equals(pair[0]))) {
+							continue;
+						}
 						ph.setAttribute(pair[0], pair[1]);
 					}
 				}
@@ -688,12 +707,28 @@ public class FromXliff2 {
 			}
 			if (result == null) {
 				// Levsha empty <ph id="1" dataRef="1"/> — look up originalData by dataRef, then id.
-				result = new Element("ph");
-				result.setAttribute("id", id);
+				// A bare <x> that reached ToXliff2 without an "x" id prefix is restored from
+				// oxlf-original; every other numeric id stays a <ph>.
+				boolean standaloneX = "x".equals(storedMeta(attributes, id, ToOpenXliff.ORIGINAL_NAME_ATTR));
+				result = new Element(standaloneX ? "x" : "ph");
+				String outId = id;
+				if (standaloneX) {
+					String origId = storedMeta(attributes, id, ToOpenXliff.ORIG_ID_ATTR);
+					if (origId != null && !origId.isEmpty()) {
+						outId = origId;
+					}
+				}
+				result.setAttribute("id", outId);
 				String dataRef = tag.getAttributeValue("dataRef");
 				String key = resolveOriginalDataKey(tags, dataRef, id);
 				if (key != null && tags.containsKey(key) && tags.get(key) != null) {
-					result.addContent(tags.get(key));
+					String payload = tags.get(key);
+					if (!(standaloneX && isSerializedEmptyMarkup(payload))) {
+						result.addContent(payload);
+					}
+				}
+				if (standaloneX) {
+					applyPlaceholderAttributes(result, attributes, id);
 				}
 			}
 		}
@@ -974,6 +1009,31 @@ public class FromXliff2 {
 		result.setAttribute("id", fallbackId);
 		if (pairingRid != null && !pairingRid.isEmpty()) {
 			result.setAttribute("rid", pairingRid);
+		}
+	}
+
+	/** True for a toString()'d empty {@code <x/>} or {@code <ph/>}, which must not be nested again. */
+	private static boolean isSerializedEmptyMarkup(String text) {
+		if (text == null || text.isBlank()) {
+			return false;
+		}
+		String t = text.trim();
+		return t.matches("(?is)<(?:ph|x)\\b[^>]*/>")
+				|| t.matches("(?is)<(?:ph|x)\\b[^>]*>\\s*</(?:ph|x)\\s*>");
+	}
+
+	private static void applyPlaceholderAttributes(Element result, Map<String, List<String[]>> attributes,
+			String attrKey) {
+		if (result == null || attributes == null || attrKey == null || !attributes.containsKey(attrKey)) {
+			return;
+		}
+		List<String[]> list = attributes.get(attrKey);
+		for (int i = 0; i < list.size(); i++) {
+			String[] pair = list.get(i);
+			if (pair[0].startsWith("oxlf-") || "id".equals(pair[0])) {
+				continue;
+			}
+			result.setAttribute(pair[0], pair[1]);
 		}
 	}
 

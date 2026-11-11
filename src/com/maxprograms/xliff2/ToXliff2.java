@@ -605,7 +605,9 @@ public class ToXliff2 {
 					: (tag.getText() != null ? tag.getText() : "");
 			if (!levshaStyle && isSerializedEmptyPlaceholder(newPayload)) {
 				storeAttributes(tagAttributes, tag, dataId);
-				storeOriginalName(tagAttributes, tag.getName(), dataId);
+				// A serialized <x id="1"/> is an empty standalone code, not an empty
+				// <ph>. Drop the markup (storing it re-wraps the tag) but keep the name.
+				storePlaceholderIdentity(tagAttributes, tag, dataId, newPayload);
 				return;
 			}
 			Element existing = findData(originalData, dataId);
@@ -615,7 +617,7 @@ public class ToXliff2 {
 					// Same payload: still refresh stored attrs so the target's original
 					// id/rid/ctype win over the source's when they differ.
 					storeAttributes(tagAttributes, tag, dataId);
-					storeOriginalName(tagAttributes, tag.getName(), dataId);
+					storePlaceholderIdentity(tagAttributes, tag, dataId, newPayload);
 					return;
 				}
 				Set<String> used = collectDataIds(originalData);
@@ -636,7 +638,7 @@ public class ToXliff2 {
 			}
 			originalData.addContent(data);
 			storeAttributes(tagAttributes, tag, dataId);
-			storeOriginalName(tagAttributes, tag.getName(), dataId);
+			storePlaceholderIdentity(tagAttributes, tag, dataId, newPayload);
 			return;
 		}
 		if ("bpt".equals(tag.getName())) {
@@ -684,7 +686,16 @@ public class ToXliff2 {
 					originalData.addContent(data);
 				}
 			}
-			storeAttributes(tagAttributes, tag, "x" + tag.getAttributeValue("id"));
+			// Historical key was "x" + raw id, while the ph id is the bare number, so
+			// FromXliff2 never saw the attributes. Store them under the ph id too,
+			// and record that this placeholder was an <x>.
+			String rawId = tag.getAttributeValue("id", "");
+			storeAttributes(tagAttributes, tag, "x" + rawId);
+			storeAttributes(tagAttributes, tag, dataId);
+			storeOriginalName(tagAttributes, "x", dataId);
+			if (!rawId.isEmpty()) {
+				upsertMeta(findOrCreateAttrGroup(tagAttributes, dataId), ToOpenXliff.ORIG_ID_ATTR, rawId);
+			}
 			return;
 		}
 		List<Element> children = tag.getChildren();
@@ -806,6 +817,63 @@ public class ToXliff2 {
 			}
 			upsertMeta(group, a.getName(), a.getValue());
 		}
+	}
+
+	/**
+	 * Remember whether an empty placeholder was a bare {@code <x>} or a {@code <ph>}.
+	 * {@code isSerializedEmptyPlaceholder} drops both strings so they are not stored as
+	 * originalData; without the name, Merge writes every one of them back as {@code <ph>}.
+	 */
+	private static void storePlaceholderIdentity(Element tagAttributes, Element tag, String dataId, String payload) {
+		String name = placeholderElementName(tag, payload);
+		storeOriginalName(tagAttributes, name, dataId);
+		if (!"x".equals(name)) {
+			return;
+		}
+		String origId = tag == null ? "" : tag.getAttributeValue(ToOpenXliff.ORIG_ID_ATTR, "");
+		if (origId.isEmpty()) {
+			origId = serializedPlaceholderId(payload);
+		}
+		if (!origId.isEmpty()) {
+			upsertMeta(findOrCreateAttrGroup(tagAttributes, dataId), ToOpenXliff.ORIG_ID_ATTR, origId);
+		}
+	}
+
+	private static String placeholderElementName(Element tag, String payload) {
+		String marked = tag == null ? "" : tag.getAttributeValue(ToOpenXliff.ORIGINAL_NAME_ATTR, "");
+		if ("x".equals(marked)) {
+			return "x";
+		}
+		String fromPayload = serializedPlaceholderName(payload);
+		if ("x".equals(fromPayload)) {
+			return "x";
+		}
+		return tag == null ? "ph" : tag.getName();
+	}
+
+	/** Element name of a serialized empty {@code <ph>} or {@code <x>}, or null. */
+	private static String serializedPlaceholderName(String text) {
+		java.util.regex.Matcher matcher = serializedEmptyPlaceholder(text);
+		return matcher == null ? null : matcher.group(1).toLowerCase();
+	}
+
+	private static String serializedPlaceholderId(String text) {
+		java.util.regex.Matcher matcher = serializedEmptyPlaceholder(text);
+		if (matcher == null) {
+			return "";
+		}
+		java.util.regex.Matcher id = java.util.regex.Pattern.compile("(?i)\\bid\\s*=\\s*\"([^\"]*)\"")
+				.matcher(matcher.group(2));
+		return id.find() ? id.group(1) : "";
+	}
+
+	private static java.util.regex.Matcher serializedEmptyPlaceholder(String text) {
+		if (text == null) {
+			return null;
+		}
+		java.util.regex.Matcher matcher = java.util.regex.Pattern
+				.compile("(?is)^<(ph|x)\\b([^>]*)(?:/>|>(?:\\s*)</\\1\\s*>)$").matcher(text.trim());
+		return matcher.matches() ? matcher : null;
 	}
 
 	/** Persist the 1.2 element name so FromXliff2 can restore {@code bpt}/{@code ept}/{@code bx}/{@code ex}. */
