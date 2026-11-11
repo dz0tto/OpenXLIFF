@@ -318,15 +318,39 @@ public class FromOpenXliff {
         if (mqPayload && !pairing) {
             name = "ph";
         }
+        // Projects converted before the name was stored already have an empty <ph>
+        // where the skeleton still has <x id="…"/>. Put that <x> back. A real <ph>
+        // (mq:rxt, mq:ch, {}) stays a <ph> because its skeleton tag is not <x>.
+        String forcedId = null;
+        if (!mqPayload && !pairing && "ph".equals(name) && sourceInline != null
+                && "x".equals(sourceInline.getName()) && isEmptyPlaceholderPayload(text)) {
+            name = "x";
+            if (text.indexOf('<') >= 0) {
+                text = "";
+            }
+            String skeletonId = sourceInline.getAttributeValue("id", "");
+            if (!skeletonId.isEmpty()) {
+                forcedId = skeletonId;
+            }
+        }
         sb.append('<');
         sb.append(name);
         List<Attribute> atts = e.getAttributes();
+        boolean wroteId = false;
         for (int i = 0; i < atts.size(); i++) {
             Attribute a = atts.get(i);
             if (a.getName().startsWith("oxlf-")) {
                 continue;
             }
-            appendAttr(sb, a.getName(), a.getValue());
+            String value = a.getValue();
+            if (forcedId != null && "id".equals(a.getName())) {
+                value = forcedId;
+                wroteId = true;
+            }
+            appendAttr(sb, a.getName(), value);
+        }
+        if (forcedId != null && !wroteId) {
+            appendAttr(sb, "id", forcedId);
         }
         sb.append('>');
         if (!text.isEmpty()) {
